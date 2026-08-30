@@ -255,6 +255,7 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 				}
 				writeChunk(delta{}, &stop)
 				// OpenAI-style trailing usage chunk (empty choices)
+				fmt.Fprint(w, "data: ")
 				json.NewEncoder(w).Encode(map[string]any{
 					"id": id, "object": "chat.completion.chunk",
 					"created": time.Now().Unix(), "model": model,
