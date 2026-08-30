@@ -10,9 +10,33 @@ Mac providers ──outbound WSS────────────────
 
 ## 0. Prerequisites
 
-- A domain with an **A record** pointing to the server IP (e.g. `api.yourdomain.com`)
+- A DNS name for the server (a bought domain, or a free one for testing — see below)
 - A release downloaded from GitHub Releases (`idlegrid-coordinator-vX-linux-amd64.tar.gz`),
   or built locally with `scripts/release.sh vX`
+
+### Testing WITHOUT buying a domain
+
+The coordinator code has **no domain in it**. The domain appears in exactly
+one functional file: the Caddyfile. So you can deploy today on a temporary
+name and swap later by editing one line.
+
+| Option | What you get | Effort |
+|---|---|---|
+| **A. Raw IP** | `http://SERVER_IP:8090` — providers use `ws://SERVER_IP:8090/ws/provider`, devs use `http://...`. No TLS, no Caddy needed | ~0 min |
+| **B. sslip.io (recommended test)** | Free magic DNS: `api.203-0-113-10.sslip.io` (your IP, dots→dashes) resolves to your server. Caddy gets a **real Let's Encrypt certificate** for it — full production behavior | ~5 min |
+| **C. trycloudflare** | `cloudflared tunnel --url http://localhost:8090` → instant HTTPS URL, no firewall changes. Random URL, changes on restart | ~2 min |
+
+Option B is closest to production: put `api.YOUR-IP-DASHED.sslip.io` in the
+Caddyfile instead of `api.example.com` — everything else in this guide is
+identical.
+
+**Swapping to your real domain later** (after buying one):
+
+1. Add an A record: `api.yourdomain.com` → server IP
+2. Edit the one line in `/etc/caddy/Caddyfile` → `systemctl reload caddy`
+3. Providers installed with the old URL keep it in `~/.idlegrid/config.env` —
+   re-run the same one-line install command with the new URL (only matters
+   once you have many Macs, so do the swap before scaling)
 
 ## 1. Server setup (once)
 
