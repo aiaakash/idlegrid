@@ -8,6 +8,10 @@ provider-swift/libs/
 provider-swift/vendor/
 provider-swift/.build/release/mlx.metallib
 
+console/.next/
+console/node_modules/
+console/.env
+
 # models / logs
 *.gguf
 *.log

@@ -70,6 +70,21 @@ curl -X POST https://api.sqlguroo.com/v1/admin/users \
 **Upgrade** = `git tag vX && git push origin vX` for releases, or just push to
 `main` for auto-deploy. Macs reconnect automatically after restarts.
 
+### Console (Next.js) on Coolify
+
+The billing console lives in `console/` (Next.js). Deploy as a second resource:
+
+1. New Resource → Git repository → `aiaakash/idlegrid`, branch `main`,
+   **Build Pack: Dockerfile**? — No: the console has no Dockerfile yet; use
+   **Docker Compose / Dockerfile** after adding one, or simplest today:
+   `cd console && npm i && npm run build && npm start` behind a reverse proxy.
+2. Domain: `https://console.sqlguroo.com`
+3. Env: `CONSOLE_API_URL=http://<coordinator-container>:8080`,
+   `NODE_ENV=production`
+
+(First console user: `POST /v1/console/admin/users` with the admin API key —
+see "Creating developer accounts" above; that endpoint also sets passwords.)
+
 ---
 
 ## §B. Plain Ubuntu (systemd + Caddy)

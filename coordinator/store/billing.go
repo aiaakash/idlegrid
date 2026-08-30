@@ -415,3 +415,96 @@ func (p *PostgresBilling) AccountBalance(ctx context.Context, userID *int64, kin
 		userID, kind).Scan(&sum)
 	return sum, err
 }
+
+// ---- Phase 3: console ----
+
+// SetPasswordHash stores a bcrypt hash for a user (console login).
+func (p *PostgresBilling) SetPasswordHash(ctx context.Context, userID int64, hash string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE users SET password_hash=$2 WHERE id=$1`, userID, hash)
+	return err
+}
+
+func (p *PostgresBilling) GetUserByEmail(ctx context.Context, email string) (id int64, role, passwordHash string, err error) {
+	err = p.pool.QueryRow(ctx,
+		`SELECT id, role, COALESCE(password_hash,'') FROM users WHERE email=$1`, email).
+		Scan(&id, &role, &passwordHash)
+	return
+}
+
+// CreateSession stores a session token hash. Caller supplies the raw token
+// and expiry; we persist only the hash.
+func (p *PostgresBilling) CreateSession(ctx context.Context, tokenHash string, userID int64, expiresAt time.Time) error {
+	_, err := p.pool.Exec(ctx,
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1,$2,$3)`,
+		tokenHash, userID, expiresAt)
+	return err
+}
+
+// ResolveSession maps a session token hash to its user if unexpired.
+func (p *PostgresBilling) ResolveSession(ctx context.Context, tokenHash string) (APIKeyAuth, bool, error) {
+	var a APIKeyAuth
+	err := p.pool.QueryRow(ctx, `
+		SELECT u.id, u.email, u.role
+		FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash=$1 AND s.expires_at > now()`, tokenHash).Scan(&a.UserID, &a.Email, &a.Role)
+	if err != nil {
+		return APIKeyAuth{}, false, nil
+	}
+	return a, true, nil
+}
+
+func (p *PostgresBilling) DeleteSession(ctx context.Context, tokenHash string) error {
+	_, err := p.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, tokenHash)
+	return err
+}
+
+func (p *PostgresBilling) CreateAPIKeyWithID(ctx context.Context, userID int64, keyHash, label string) (int64, error) {
+	var id int64
+	err := p.pool.QueryRow(ctx,
+		`INSERT INTO api_keys (user_id, key_hash, label) VALUES ($1,$2,$3) RETURNING id`,
+		userID, keyHash, label).Scan(&id)
+	return id, err
+}
+
+func (p *PostgresBilling) ListAPIKeys(ctx context.Context, userID int64) ([]KeyRow, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, label, created_at, revoked_at IS NOT NULL
+		FROM api_keys WHERE user_id=$1 ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KeyRow
+	for rows.Next() {
+		var r KeyRow
+		if err := rows.Scan(&r.ID, &r.Label, &r.CreatedAt, &r.Revoked); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (p *PostgresBilling) RevokeAPIKey(ctx context.Context, userID, keyID int64) error {
+	_, err := p.pool.Exec(ctx,
+		`UPDATE api_keys SET revoked_at=now() WHERE id=$1 AND user_id=$2`, keyID, userID)
+	return err
+}
+
+func (p *PostgresBilling) ListUsers(ctx context.Context) ([]UserRow, error) {
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, email, role, created_at FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserRow
+	for rows.Next() {
+		var r UserRow
+		if err := rows.Scan(&r.ID, &r.Email, &r.Role, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

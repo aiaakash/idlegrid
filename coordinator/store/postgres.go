@@ -290,3 +290,83 @@ func (p *PostgresBilling) UsageRows(ctx context.Context, userID *int64, limit in
 	}
 	return out, rows.Err()
 }
+
+// ---- payouts ----
+
+func (p *PostgresBilling) CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64) (int64, error) {
+	var id int64
+	err := p.pool.QueryRow(ctx, `
+		INSERT INTO payouts (user_id, amount_micro) VALUES ($1, $2) RETURNING id`,
+		userID, amountMicro).Scan(&id)
+	return id, err
+}
+
+func (p *PostgresBilling) ListPayouts(ctx context.Context, userID *int64) ([]PayoutRow, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, user_id, amount_micro, status, rail, COALESCE(rail_ref,''), created_at, paid_at
+		FROM payouts
+		WHERE ($1::bigint IS NULL OR user_id = $1)
+		ORDER BY id DESC LIMIT 200`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PayoutRow
+	for rows.Next() {
+		var r PayoutRow
+		if err := rows.Scan(&r.ID, &r.UserID, &r.AmountMicro, &r.Status, &r.Rail, &r.RailRef, &r.CreatedAt, &r.PaidAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (p *PostgresBilling) MarkPayout(ctx context.Context, payoutID int64, status, rail, railRef string) error {
+	_, err := p.pool.Exec(ctx, `
+		UPDATE payouts SET status=$2, rail=$3, rail_ref=$4,
+			paid_at = CASE WHEN $2='paid' THEN now() ELSE paid_at END
+		WHERE id=$1`, payoutID, status, rail, railRef)
+	return err
+}
+
+// SettlePayout marks a payout paid AND records the escrow debit in one tx.
+// The payout leaves the platform's provider_earnings escrow.
+func (p *PostgresBilling) SettlePayout(ctx context.Context, payoutID int64, rail, railRef string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID int64
+	var amount int64
+	var status string
+	err = tx.QueryRow(ctx,
+		`SELECT user_id, amount_micro, status FROM payouts WHERE id=$1`, payoutID).
+		Scan(&userID, &amount, &status)
+	if err != nil {
+		return err
+	}
+	if status == "paid" {
+		return nil // already settled
+	}
+
+	escrow, err := p.ensureAccountTx(ctx, tx, nil, "provider_earnings")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
+		VALUES ($1, 'payout', $2, 'payout', $3)
+		ON CONFLICT DO NOTHING`,
+		escrow, -amount, fmt.Sprintf("%d", payoutID)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE payouts SET status='paid', rail=$2, rail_ref=$3, paid_at=now() WHERE id=$1`,
+		payoutID, rail, railRef); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
