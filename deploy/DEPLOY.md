@@ -30,13 +30,16 @@ Option B is closest to production: put `api.YOUR-IP-DASHED.sslip.io` in the
 Caddyfile instead of `api.example.com` — everything else in this guide is
 identical.
 
-**Swapping to your real domain later** (after buying one):
+**Swapping to the final product domain later:**
 
-1. Add an A record: `api` A record → server IP (registrar where sqlguroo.com is parked)
-2. Edit the one line in `/etc/caddy/Caddyfile` → `systemctl reload caddy`
-3. Providers installed with the old URL keep it in `~/.idlegrid/config.env` —
-   re-run the same one-line install command with the new URL (only matters
-   once you have many Macs, so do the swap before scaling)
+1. Buy/point the new domain: A record `api.newdomain.com` → same server IP
+2. Edit the one line in `/etc/caddy/Caddyfile` (`api.sqlguroo.com` →
+   `api.newdomain.com`) → `systemctl reload caddy`
+3. Providers installed with the sqlguroo.com URL keep it in
+   `~/.idlegrid/config.env` — re-run the one-line install command with the
+   new URL (one line per Mac; do this swap before scaling to many Macs)
+
+Nothing in the coordinator code changes — it has no domain in it.
 
 ## 1. Server setup (once)
 
