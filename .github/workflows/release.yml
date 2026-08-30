@@ -58,10 +58,11 @@ jobs:
           cp provider-swift/vendor/mlx.metallib dist/idlegrid/
           printf 'idlegrid provider bundle.\nidlegrid-provider and mlx.metallib MUST stay in the same directory.\n' > dist/idlegrid/README.txt
           cd dist && zip -qr idlegrid-provider-macos-arm64.zip idlegrid
+          rm -rf dist/idlegrid
       - uses: actions/upload-artifact@v4
         with:
           name: provider-macos
-          path: dist/
+          path: dist/idlegrid-provider-macos-arm64.zip
 
   publish:
     needs: [coordinator-linux, provider-macos]
@@ -74,7 +75,7 @@ jobs:
       - name: Checksums
         run: |
           cd dist
-          sha256sum coordinator-linux/* provider-macos/* > sha256sums.txt
+          sha256sum coordinator-linux/*.tar.gz provider-macos/*.zip > sha256sums.txt
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
