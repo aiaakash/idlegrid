@@ -1,91 +1,59 @@
-# idlegrid — simple guide
+# idlegrid
 
-This project turns idle Macs into one big AI server.
+Turn idle Macs into one private AI cloud. A small Go **coordinator** takes
+OpenAI-compatible requests and routes them to **provider** apps running on
+Macs (in-process MLX on the Apple GPU — no subprocess, no open ports,
+debugger-blocked). Mac owners earn from idle hardware; developers just change
+one URL in their OpenAI SDK.
 
-- A **coordinator** (small Go server) takes AI requests.
-- **Providers** (small apps on Macs) do the AI work using the Mac's own GPU (MLX).
-- Anyone can call it with the normal **OpenAI SDK** — just change the URL.
-
-You can run everything on ONE Mac. Later, add more Macs. This guide shows every step.
-
----
-
-## 1. What you need
-
-| Need | Details |
-|---|---|
-| A Mac | Apple Silicon (M1 or newer). macOS 14 or newer |
-| Xcode Command Line Tools | For building the Mac app. Version 26.6 or newer |
-| Go | For the coordinator server. Version 1.24 or newer |
-| Internet | To download one model file (~500 MB, only once) |
-
-Check your tools work:
-
-```bash
-go version
-swift --version
+```
+OpenAI SDK ──HTTPS──▶ coordinator ──outbound WSS──▶ Macs running MLX
 ```
 
 ---
 
-## 2. One-time setup (5 minutes)
+## Part 1 — Run and test locally (this is what we tested)
 
-Open Terminal and go to the project folder:
+Everything below was run and verified on a MacBook Pro (M4 Pro, 24 GB) with a
+MacBook Air as the second node.
+
+### What you need
+
+- Apple Silicon Mac, macOS 14+
+- Xcode Command Line Tools 26.6+ (`swift --version` to check)
+- Go 1.24+ (`go version` to check)
+- Internet (model downloads once, ~500 MB)
+
+### One-time setup
 
 ```bash
-cd ~/React\ Apps/idlegrid
+git clone https://github.com/YOU/idlegrid.git && cd idlegrid
+# — or copy the folder, then:  cd idlegrid
+make build        # builds coordinator + provider; first run vendors MLX (~10 min)
 ```
 
-Build everything (the Go server and the Mac app):
+`make build` automatically: vendors Apple's mlx-swift with our no-JIT fix,
+downloads the matching `mlx.metallib` from the official mlx wheel, and places
+the metallib next to the binary (required — see "Common problems").
+
+### Start the network (2 terminals)
 
 ```bash
-make build
-```
-
-The first build takes a few minutes. It also downloads the AI model when you
-first run the provider (see step 3).
-
----
-
-## 3. Run it (the easy way)
-
-You need **2 terminal windows**.
-
-**Terminal 1 — start the coordinator:**
-
-```bash
+# Terminal 1 — the coordinator (server + dashboard)
 make run-coordinator
-```
 
-You will see: `listening on :8090`. Keep this window open.
-
-**Terminal 2 — start the provider (this Mac does the AI work):**
-
-```bash
+# Terminal 2 — this Mac as a provider (downloads model on first run)
 make run-provider
 ```
 
-The first time, it downloads the model (~500 MB). When you see
-`registered as ...` — this Mac is now part of the network. Keep this window open.
+Wait for `registered as ...` in terminal 2.
 
----
+### Test it (4 ways, easiest first)
 
-## 4. Test it
+**1. Dashboard** — open `http://localhost:8090`: see the fleet, use the
+streaming playground.
 
-### Easiest test — the dashboard
-
-Open your browser:
-
-```
-http://localhost:8090
-```
-
-You will see:
-- Your Mac listed under **Fleet** (green dot = healthy)
-- A **Playground** box. Type a message, press **Send**, and watch the answer
-  stream in.
-
-### Test with curl
+**2. curl:**
 
 ```bash
 curl -s localhost:8090/v1/chat/completions \
@@ -93,145 +61,174 @@ curl -s localhost:8090/v1/chat/completions \
   -d '{"model":"Qwen2.5-0.5B-Instruct-4bit","messages":[{"role":"user","content":"What is 2+2?"}]}'
 ```
 
-### Test with Python (like any OpenAI app)
+**3. Python (any OpenAI SDK app):**
 
 ```python
 from openai import OpenAI
-
 client = OpenAI(base_url="http://localhost:8090/v1", api_key="dev-key")
-
-answer = client.chat.completions.create(
+print(client.chat.completions.create(
     model="Qwen2.5-0.5B-Instruct-4bit",
     messages=[{"role": "user", "content": "Say hello"}],
-)
-print(answer.choices[0].message.content)
+).choices[0].message.content)
 ```
 
-### Test fake Macs (no real work done, just to stress the server)
+**4. Stress test with fake Macs** (no GPU work, simulates 8–200 nodes):
 
 ```bash
-make run-fake N=8
+make run-fake N=50
 ```
 
-This adds 8 fake providers. Refresh the dashboard and watch the Fleet list grow.
-
----
-
-## 5. Stop everything
-
-Press `Ctrl+C` in each terminal window, or run this from any terminal:
-
-```bash
-make stop
-```
-
-`make stop` also kills anything stuck. If you ever see
-`address already in use`, run `make stop` and try again.
-
----
-
-## 6. Add a second Mac (for example, a MacBook Air)
-
-The second Mac only runs the provider. The coordinator stays on the first Mac.
-
-**On the first Mac** — find its address:
-
-```bash
-ipconfig getifaddr en0
-```
-
-This prints something like `192.168.29.189`. Both Macs must be on the same
-Wi-Fi network (or connected with Tailscale — even better, because it works
-like the real internet).
-
-**On the second Mac** — copy this project folder over (AirDrop, USB, or git),
-then run:
-
-```bash
-cd idlegrid
-make build
-./provider-swift/.build/release/idlegrid-provider \
-  --coordinator ws://FIRST-MAC-IP:8090/ws/provider \
-  --name "M1-Air"
-```
-
-Replace `FIRST-MAC-IP` with the address from step above (example: `192.168.29.189`).
-
-Now open the dashboard on the first Mac. You should see **two** Macs in the
-Fleet list. Send a few messages — requests will jump between them.
-
-**Fun test:** send a long message and close the second Mac's lid in the middle.
-You will see the network handle the failure — that is the hard part of this
-product, and it works.
-
----
-
-## 7. Common problems
-
-| Problem | Fix |
-|---|---|
-| `address already in use` | Run `make stop`, then start again |
-| Provider says `Could not connect` | Is the coordinator running? Is the IP correct? Same Wi-Fi? |
-| Provider is offline in dashboard | It reconnects by itself within ~30 seconds. Check its terminal |
-| `swift build` fails | Update Command Line Tools (see below) |
-| Build works but AI gives nonsense | The `mlx.metallib` file is missing or wrong version. It must sit next to the app — `make build` copies it |
-
----
-
-## 8. Settings you can change
-
-Coordinator (server):
-
-```bash
-PORT=8090                            # change the port
-IDLEGRID_API_KEYS=dev-key,my-secret  # comma-separated API keys
-```
-
-Provider (the Mac app):
-
-```bash
---coordinator URL    # where the coordinator is (default: this Mac)
---model ID           # which model to run (default: Qwen2.5-0.5B-Instruct-4bit)
---max-tokens 256     # max answer length
---name "My Mac"      # name shown on the dashboard
---dry-run            # join without running a model (for testing)
-```
-
----
-
-## 9. Run the automatic tests
+### Automated tests
 
 ```bash
 make test
 ```
 
-These tests cover the scheduler (picking Macs, spreading load, handling
-failures) and full requests from the API to a fake provider and back.
+Covers: scheduler behavior (load spreading, failure cooldown, stale sweeps)
+and full HTTP→WebSocket round trips, including a provider dying mid-stream.
+
+### Add a second Mac
+
+```bash
+# on Mac #2 — copy the repo (git clone once it's on GitHub), then:
+make build
+./provider-swift/.build/release/idlegrid-provider \
+  --coordinator ws://MAC1-IP:8090/ws/provider \
+  --code <join-code-if-set> \
+  --name "Mac-2"
+```
+
+Find Mac 1's IP with `ipconfig getifaddr en0` (same Wi-Fi) — or use Tailscale
+(recommended; it mirrors real-world NAT conditions).
+
+**Failure drills we ran:** close the lid mid-generation (client gets a clean
+error, node goes red on the dashboard, reconnects on wake), `kill -9` the
+provider (llama-server-era orphan cleanup), coordinator sleep (providers
+auto-reconnect with backoff).
+
+### Stop / clean up
+
+```bash
+make stop     # kills coordinator, providers, orphans
+```
 
 ---
 
-## 10. What is in each folder
+## Part 2 — Production (Ubuntu server, e.g. Hostinger)
+
+The proper path: **git → GitHub Releases → server pulls → Macs install with
+one command**. No AirDrop, no scp of loose files.
+
+### How the pieces ship
+
+| Piece | Built by | Shipped as |
+|---|---|---|
+| Coordinator (Linux) | `scripts/release.sh` or GitHub Actions | `idlegrid-coordinator-vX-linux-amd64.tar.gz` (binary + systemd + Caddy + env templates) |
+| Provider (macOS) | same | `idlegrid-provider-macos-arm64.zip` (binary + `mlx.metallib`) |
+| Installer | `deploy/install.sh` | `curl ... \| bash` — downloads the zip, verifies SHA-256, installs a LaunchAgent |
+
+### Step 1 — Put the repo on GitHub
+
+```bash
+cd ~/React\ Apps/idlegrid
+git remote add origin https://github.com/YOUR-USER/idlegrid.git
+git push -u origin main
+```
+
+### Step 2 — Cut a release
+
+Either push a tag and let CI build everything (`/.github/workflows/release.yml`
+builds the Linux coordinator on Ubuntu and the macOS provider on a Mac runner,
+then publishes both to GitHub Releases):
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+…or build locally and publish yourself:
+
+```bash
+./scripts/release.sh v0.3.0
+gh release create v0.3.0 --generate-notes dist/*      # brew install gh
+# or: attach dist/* to a Release in the GitHub web UI
+```
+
+### Step 3 — Deploy the coordinator on the Ubuntu server
+
+Full detail in [`deploy/DEPLOY.md`](deploy/DEPLOY.md). Short version:
+
+```bash
+ssh root@SERVER_IP
+# DNS: A record api.yourdomain.com -> SERVER_IP, then:
+apt install -y caddy
+tar -xzf idlegrid-coordinator-v0.3.0-linux-amd64.tar.gz -C /tmp
+install -m755 /tmp/coordinator /opt/idlegrid/coordinator
+install -m644 /tmp/coordinator.service /etc/systemd/system/idlegrid.service
+install -m644 /tmp/idlegrid.env /etc/idlegrid/env      # put REAL secrets in here
+install -m644 /tmp/Caddyfile /etc/caddy/Caddyfile      # set your domain
+systemctl enable --now caddy idlegrid
+curl -s https://api.yourdomain.com/healthz             # -> ok
+```
+
+Set in `/etc/idlegrid/env` (generate with `openssl rand -hex 24` / `-hex 8`):
 
 ```
-protocol/                      the shared message format (server ↔ Mac app)
-coordinator/
-  cmd/coordinator/             the server program
-  cmd/fakeprovider/            fake Macs for load testing
-  internal/registry/           list of Macs + the scheduler (who gets which job)
-  internal/server/             OpenAI API + WebSocket hub + dashboard
-provider-swift/                the Mac app (Swift + MLX, runs the model in-process)
-  libs/mlx-swift/              Apple's MLX, with one small fix (see README note)
-  vendor/mlx.metallib          GPU shader file that must sit next to the app
-docs/setup-stages.html         visual guide: 1 Mac → 2 Macs → production
+IDLEGRID_API_KEYS=<long-random>      # developer API keys
+IDLEGRID_PROVIDER_CODE=<join-code>   # Mac owners must present this to join
 ```
+
+### Step 4 — Mac owners join (one command)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/YOUR-USER/idlegrid/main/deploy/install.sh \
+  | bash -s -- --repo YOUR-USER/idlegrid \
+      --server wss://api.yourdomain.com/ws/provider \
+      --code <join-code>
+```
+
+The installer verifies checksums, installs to `~/.idlegrid`, registers a
+LaunchAgent (runs at login, restarts on crash), and connects. Uninstall:
+`install.sh --uninstall`.
+
+### Step 5 — Developers call the API
+
+```python
+client = OpenAI(base_url="https://api.yourdomain.com/v1", api_key="<IDLEGRID_API_KEYS value>")
+```
+
+Dashboard lives at `https://api.yourdomain.com/`.
 
 ---
 
-## 11. What is NOT done yet (the honest list)
+## Common problems
 
-1. Requests are **not encrypted** yet — do not send real private data
-2. Anyone who knows the URL can join as a provider — no join codes yet
-3. No payments or billing yet
-4. Server state is in memory — restart clears the list of Macs (they reconnect)
+| Problem | Fix |
+|---|---|
+| `address already in use` | `make stop`, retry |
+| Provider `Could not connect` | coordinator running? IP right? Same network? |
+| `REGISTRATION DENIED: invalid or missing join code` | `--code` must match the coordinator's `IDLEGRID_PROVIDER_CODE` |
+| AI output is nonsense | `mlx.metallib` missing or version-mismatched — must sit next to the binary and match the vendored mlx (0.29.1). `make build` handles this |
+| `swift build` fails on toolchain | CLT must be a clean 26.6+ install (corrupted partial updates caused this once — full reinstall fixed it) |
+| First provider start is slow | downloading model weights (once) |
 
-The full plan for fixing these is at the bottom of `docs/setup-stages.html`.
+## Repo layout
+
+```
+protocol/                      wire contract (coordinator ↔ provider)
+coordinator/                   Go control plane (+ fakeprovider simulator)
+provider-swift/                Swift provider (in-process MLX)
+  libs/mlx-swift/              vendored mlx (bootstrapped, no-JIT patched) — not in git
+  vendor/mlx.metallib          Metal shaders (fetched, version-pinned) — not in git
+deploy/                        systemd, Caddyfile, env template, install.sh, DEPLOY.md
+scripts/                       release.sh, bootstrap-mlx.sh
+docs/setup-stages.html         visual: 1 Mac → 2 Macs → production
+```
+
+## Honest status (before public launch)
+
+1. Requests are **not yet encrypted** end-to-end — invite only people you trust
+2. Join codes are shared secrets, not per-user accounts
+3. No billing yet; coordinator state is in-memory (providers auto-reconnect after restarts)
+
+Next up (roadmap): NaCl Box E2E encryption → Secure Enclave keys → per-user
+accounts → metering + Stripe.
