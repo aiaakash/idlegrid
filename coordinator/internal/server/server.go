@@ -6,12 +6,14 @@ import (
 	"time"
 
 	"idlegrid/coordinator/internal/registry"
+	"idlegrid/coordinator/store"
 )
 
 // Config for NewHandler.
 type Config struct {
 	APIKeys  []string
-	JoinCode string // when set, providers must present it at register
+	JoinCode string        // when set, providers must present it at register
+	Billing  store.Billing // nil in dev (no DATABASE_URL)
 }
 
 // NewHandler builds the full coordinator HTTP surface:
@@ -19,12 +21,13 @@ type Config struct {
 //	POST /v1/chat/completions   OpenAI-compatible inference (stream + non-stream)
 //	GET  /v1/models             models servable by live providers
 //	GET  /ws/provider           provider WebSocket endpoint
+//	POST /v1/admin/users        admin: create developer + API key (needs DATABASE_URL)
 //	GET  /healthz               liveness
-//	GET  /debug/providers       registered nodes (dev)
+//	GET  /debug/providers       registered nodes (auth'd)
 func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	router := NewRouter()
 	hub := NewHub(reg, router, cfg.JoinCode)
-	gateway := NewGateway(reg, hub, router, cfg.APIKeys)
+	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing)
 	hub.StartSweeper(5 * time.Second)
 
 	mux := http.NewServeMux()
@@ -32,6 +35,7 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	mux.HandleFunc("/ws/provider", hub.HandleWS)
 	mux.HandleFunc("/v1/chat/completions", gateway.withAuth(gateway.handleChatCompletions))
 	mux.HandleFunc("/v1/models", gateway.withAuth(gateway.handleModels))
+	mux.HandleFunc("/v1/admin/users", gateway.withAuth(gateway.handleCreateUser))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

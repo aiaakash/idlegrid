@@ -3,11 +3,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"idlegrid/coordinator/store"
 
 	"idlegrid/coordinator/internal/registry"
 	"idlegrid/coordinator/internal/server"
@@ -19,10 +22,27 @@ func main() {
 	joinCode := os.Getenv("IDLEGRID_PROVIDER_CODE")
 
 	reg := registry.New()
-	handler := server.NewHandler(reg, server.Config{
+	cfg := server.Config{
 		APIKeys:  apiKeys,
 		JoinCode: joinCode,
-	})
+	}
+
+	// Billing store: Postgres when DATABASE_URL is set (production);
+	// otherwise nil → admin env keys only, no metering rows (local dev).
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		billing, err := store.NewPostgresBilling(ctx, dbURL)
+		cancel()
+		if err != nil {
+			log.Fatalf("[coordinator] DATABASE_URL set but store unavailable: %v", err)
+		}
+		cfg.Billing = billing
+		log.Printf("[coordinator] billing store: postgres (metering + per-user keys active)")
+	} else {
+		log.Printf("[coordinator] billing store: none (DATABASE_URL not set — dev mode)")
+	}
+
+	handler := server.NewHandler(reg, cfg)
 
 	srv := &http.Server{
 		Addr:              ":" + port,

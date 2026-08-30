@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"idlegrid/coordinator/internal/registry"
+	"idlegrid/coordinator/store"
 	"idlegrid/protocol"
 )
 
@@ -17,15 +19,37 @@ type Gateway struct {
 	Reg     *registry.Registry
 	Hub     *Hub
 	Router  *Router
-	APIKeys map[string]bool
+	APIKeys map[string]bool // env keys = admin
+	Billing store.Billing   // nil in dev (no DATABASE_URL): env keys only, no metering
 }
 
-func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string) *Gateway {
+func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing) *Gateway {
 	keys := make(map[string]bool, len(apiKeys))
 	for _, k := range apiKeys {
 		keys[k] = true
 	}
-	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys}
+	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing}
+}
+
+// ---- request context ----
+
+type ctxKey int
+
+const (
+	ctxUserID ctxKey = iota
+	ctxIsAdmin
+)
+
+func userIDFrom(ctx context.Context) *int64 {
+	if v, ok := ctx.Value(ctxUserID).(*int64); ok {
+		return v
+	}
+	return nil
+}
+
+func isAdminFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(ctxIsAdmin).(bool)
+	return v
 }
 
 // ---- OpenAI wire shapes ----
@@ -39,7 +63,7 @@ type chatRequest struct {
 	Model     string        `json:"model"`
 	Messages  []chatMessage `json:"messages"`
 	Stream    bool          `json:"stream"`
-	MaxTokens *int          `json:"max_tokens,omitempty"` // pointer: omit when unset (0 means "1 token" to llama.cpp)
+	MaxTokens *int          `json:"max_tokens,omitempty"` // pointer: omit when unset
 }
 
 type delta struct {
@@ -95,6 +119,46 @@ func (g *Gateway) handleDebugProviders(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(g.Reg.Snapshot())
 }
 
+// handleCreateUser is the admin bootstrap: create a developer + first key.
+func (g *Gateway) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if !isAdminFrom(r.Context()) {
+		openAIError(w, http.StatusForbidden, "admin key required", "auth_error", "admin_only")
+		return
+	}
+	if g.Billing == nil {
+		openAIError(w, http.StatusServiceUnavailable, "billing store unavailable (set DATABASE_URL)", "server_error", "no_db")
+		return
+	}
+	var body struct {
+		Email string `json:"email"`
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !strings.Contains(body.Email, "@") {
+		openAIError(w, http.StatusBadRequest, `body must be {"email":"...","label":"..."}`, "invalid_request_error", "")
+		return
+	}
+	uid, err := g.Billing.EnsureUser(r.Context(), body.Email, "developer")
+	if err != nil {
+		openAIError(w, http.StatusInternalServerError, err.Error(), "server_error", "")
+		return
+	}
+	raw := "sk-ig-" + newID() + newID() // 48 hex chars; shown exactly once
+	if err := g.Billing.CreateAPIKey(r.Context(), uid, store.HashKey(raw), body.Label); err != nil {
+		openAIError(w, http.StatusInternalServerError, err.Error(), "server_error", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"user_id": uid, "email": body.Email, "api_key": raw})
+}
+
+// reqOutcome accumulates billing-relevant facts while a request runs.
+type reqOutcome struct {
+	text    strings.Builder
+	status  string // completed | failed | cancelled | timeout
+	provIn  *int
+	provOut *int
+}
+
 func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -114,6 +178,13 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		estTokens = 4096
 	}
 
+	// Input estimate for metering (independent second opinion).
+	inputChars := 0
+	for _, m := range req.Messages {
+		inputChars += len(m.Content)
+	}
+	outcome := &reqOutcome{status: "completed"}
+
 	// 1. Schedule: pick the least-loaded provider with the model resident
 	// and atomically reserve capacity.
 	node, err := g.Reg.Reserve(req.Model, estTokens)
@@ -122,11 +193,13 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 			"no provider available for model "+req.Model, "server_error", "no_provider")
 		return
 	}
-	failed := false
-	defer func() { g.Reg.Release(node.ID, estTokens, failed) }()
 
-	// 2. Dispatch over the provider's WebSocket.
+	// Create the event channel BEFORE dispatch: if the provider dies right
+	// after Send, the hub's failure event must have a channel to land on.
 	reqID := "req-" + newID()
+	events := g.Router.Create(reqID)
+	defer g.Router.Resolve(reqID)
+
 	body, _ := json.Marshal(req)
 	env, _ := protocol.New(protocol.TypeInferenceRequest, protocol.InferenceRequest{
 		RequestID: reqID,
@@ -134,30 +207,59 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		Stream:    req.Stream,
 		Body:      body,
 	})
-	// Create the event channel BEFORE dispatch: if the provider dies right
-	// after Send, the hub's failure event must have a channel to land on.
-	events := g.Router.Create(reqID)
-	defer g.Router.Resolve(reqID)
-
 	if !g.Hub.Send(node.ID, env) {
-		failed = true
+		g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, true)
 		openAIError(w, http.StatusBadGateway, "provider connection lost before dispatch", "server_error", "provider_down")
 		return
 	}
 	log.Printf("[gateway] request %s dispatched to %s (model=%s stream=%v)", reqID, node.ID, req.Model, req.Stream)
 
 	if req.Stream {
-		failed = g.streamResponse(w, r, reqID, req.Model, node.ID, events)
+		failed := g.streamResponse(w, r, reqID, req.Model, node.ID, events, outcome)
+		g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, failed)
 		return
 	}
-	failed = g.collectResponse(w, r, reqID, req.Model, node.ID, events)
+	failed := g.collectResponse(w, r, reqID, req.Model, node.ID, events, outcome)
+	g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, failed)
+}
+
+// finishUsage writes the metering row when billing is configured.
+func (g *Gateway) finishUsage(r *http.Request, reqID, model, nodeID string, inputChars int, o *reqOutcome, failed bool) {
+	if g.Billing == nil {
+		return
+	}
+	if failed && o.status == "completed" {
+		o.status = "failed"
+	}
+	ev := store.UsageEvent{
+		RequestID:       reqID,
+		UserID:          userIDFrom(r.Context()),
+		NodeID:          nodeID,
+		Model:           model,
+		EstInputTokens:  store.EstimateTokens(strings.Repeat("x", inputChars)),
+		EstOutputTokens: store.EstimateTokens(o.text.String()),
+		ProviderInput:   o.provIn,
+		ProviderOutput:  o.provOut,
+		WithinTolerance: store.CountsMatch(store.EstimateTokens(o.text.String()), derefInt(o.provOut)),
+		Status:          o.status,
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := g.Billing.RecordUsage(ctx, ev); err != nil {
+		log.Printf("[gateway] RecordUsage %s: %v", reqID, err)
+	}
+}
+
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 // collectResponse handles non-streaming: buffer chunks, return one JSON body.
 // Returns true if the request failed (drives scheduler cooldown).
-func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope) bool {
-	var sb strings.Builder
-	var usage protocol.Usage
+func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope, o *reqOutcome) bool {
 	timeout := time.After(120 * time.Second)
 	for {
 		select {
@@ -166,15 +268,15 @@ func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID,
 			case protocol.TypeInferenceChunk:
 				var c protocol.InferenceChunk
 				if err := env.Decode(&c); err == nil {
-					sb.WriteString(c.Delta)
+					o.text.WriteString(c.Delta)
 				}
 			case protocol.TypeInferenceComplete:
 				var done protocol.InferenceComplete
+				pIn, pOut := 0, 0
 				if err := env.Decode(&done); err == nil {
-					usage = done.Usage
-				}
-				if usage.CompletionTokens == 0 {
-					usage.CompletionTokens = len(sb.String()) / 4
+					pIn, pOut = done.Usage.PromptTokens, done.Usage.CompletionTokens
+					o.provIn = &done.Usage.PromptTokens
+					o.provOut = &done.Usage.CompletionTokens
 				}
 				finish := "stop"
 				w.Header().Set("Content-Type", "application/json")
@@ -182,27 +284,30 @@ func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID,
 					ID: "chatcmpl-" + reqID, Object: "chat.completion",
 					Created: time.Now().Unix(), Model: model,
 					Choices: []choice{{
-						Index: 0, Message: &delta{Role: "assistant", Content: sb.String()},
+						Index: 0, Message: &delta{Role: "assistant", Content: o.text.String()},
 						FinishReason: &finish,
 					}},
 					Usage: &usageStats{
-						PromptTokens:     usage.PromptTokens,
-						CompletionTokens: usage.CompletionTokens,
-						TotalTokens:      usage.PromptTokens + usage.CompletionTokens,
+						PromptTokens:     pIn,
+						CompletionTokens: pOut,
+						TotalTokens:      pIn + pOut,
 					},
 				})
 				return false
 			case protocol.TypeInferenceError:
 				var e protocol.InferenceError
 				_ = env.Decode(&e)
+				o.status = "failed"
 				openAIError(w, http.StatusBadGateway, e.Error, "server_error", "provider_error")
 				return true
 			}
 		case <-timeout:
+			o.status = "timeout"
 			g.Hub.Send(nodeID, mustEnvelope(protocol.TypeCancel, protocol.Cancel{RequestID: reqID}))
 			openAIError(w, http.StatusGatewayTimeout, "inference timed out", "server_error", "timeout")
 			return true
 		case <-r.Context().Done():
+			o.status = "cancelled"
 			g.Hub.Send(nodeID, mustEnvelope(protocol.TypeCancel, protocol.Cancel{RequestID: reqID}))
 			return true
 		}
@@ -211,7 +316,7 @@ func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID,
 
 // streamResponse handles streaming: relay chunks as OpenAI SSE events.
 // Returns true if the request failed.
-func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope) bool {
+func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope, o *reqOutcome) bool {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		openAIError(w, http.StatusInternalServerError, "streaming unsupported", "server_error", "")
@@ -237,7 +342,6 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 	writeChunk(delta{Role: "assistant"}, nil)
 
 	stop := "stop"
-	var usage protocol.Usage
 	timeout := time.After(120 * time.Second)
 	for {
 		select {
@@ -246,12 +350,16 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 			case protocol.TypeInferenceChunk:
 				var c protocol.InferenceChunk
 				if err := env.Decode(&c); err == nil && c.Delta != "" {
+					o.text.WriteString(c.Delta)
 					writeChunk(delta{Content: c.Delta}, nil)
 				}
 			case protocol.TypeInferenceComplete:
 				var done protocol.InferenceComplete
+				pIn, pOut := 0, 0
 				if err := env.Decode(&done); err == nil {
-					usage = done.Usage
+					pIn, pOut = done.Usage.PromptTokens, done.Usage.CompletionTokens
+					o.provIn = &done.Usage.PromptTokens
+					o.provOut = &done.Usage.CompletionTokens
 				}
 				writeChunk(delta{}, &stop)
 				// OpenAI-style trailing usage chunk (empty choices)
@@ -261,9 +369,9 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 					"created": time.Now().Unix(), "model": model,
 					"choices": []any{},
 					"usage": usageStats{
-						PromptTokens:     usage.PromptTokens,
-						CompletionTokens: usage.CompletionTokens,
-						TotalTokens:      usage.PromptTokens + usage.CompletionTokens,
+						PromptTokens:     pIn,
+						CompletionTokens: pOut,
+						TotalTokens:      pIn + pOut,
 					},
 				})
 				fmt.Fprint(w, "\n")
@@ -273,18 +381,19 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 			case protocol.TypeInferenceError:
 				var e protocol.InferenceError
 				_ = env.Decode(&e)
-				// Mid-stream we can't change the status code; send an
-				// OpenAI-style error event then close.
+				o.status = "failed"
 				fmt.Fprintf(w, "data: {\"error\":{\"message\":%q,\"type\":\"server_error\"}}\n\n", e.Error)
 				flusher.Flush()
 				return true
 			}
 		case <-timeout:
+			o.status = "timeout"
 			g.Hub.Send(nodeID, mustEnvelope(protocol.TypeCancel, protocol.Cancel{RequestID: reqID}))
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			flusher.Flush()
 			return true
 		case <-r.Context().Done():
+			o.status = "cancelled"
 			g.Hub.Send(nodeID, mustEnvelope(protocol.TypeCancel, protocol.Cancel{RequestID: reqID}))
 			return true
 		}
@@ -299,14 +408,26 @@ func mustEnvelope(t string, payload any) envelope {
 	return env
 }
 
-// withAuth enforces bearer keys from IDLEGRID_API_KEYS.
+// withAuth enforces bearer keys: env keys are admin; DB keys are per-user.
 func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || !g.APIKeys[strings.TrimPrefix(auth, "Bearer ")] {
+		if !strings.HasPrefix(auth, "Bearer ") {
 			openAIError(w, http.StatusUnauthorized, "invalid API key", "auth_error", "invalid_api_key")
 			return
 		}
-		next(w, r)
+		key := strings.TrimPrefix(auth, "Bearer ")
+		if g.APIKeys[key] {
+			next(w, r.WithContext(context.WithValue(r.Context(), ctxIsAdmin, true)))
+			return
+		}
+		if g.Billing != nil {
+			if a, ok, _ := g.Billing.ResolveAPIKey(r.Context(), store.HashKey(key)); ok {
+				uid := a.UserID
+				next(w, r.WithContext(context.WithValue(r.Context(), ctxUserID, &uid)))
+				return
+			}
+		}
+		openAIError(w, http.StatusUnauthorized, "invalid API key", "auth_error", "invalid_api_key")
 	}
 }

@@ -38,16 +38,33 @@ The repo root has a `Dockerfile` (multi-stage: Go build → tiny alpine image,
 4. **Environment Variables** (in the app settings):
    | Name | Value |
    |---|---|
-   | `IDLEGRID_API_KEYS` | `openssl rand -hex 24` |
+   | `IDLEGRID_API_KEYS` | `openssl rand -hex 24` (admin keys) |
    | `IDLEGRID_PROVIDER_CODE` | `openssl rand -hex 8` (give to Mac owners) |
    | `PORT` | `8080` (image default) |
-5. **Health check** path: `/healthz` (image already defines it).
-6. Press **Deploy**. First build ~1 min.
-7. **Auto-deploy**: in the app's *Webhook* settings, copy the deploy webhook
+   | `DATABASE_URL` | see "Postgres" below — enables billing/metering |
+
+5. **Postgres** (billing store — required for metering + per-user keys):
+   - Coolify → **New Resource → Database → PostgreSQL** (same server, attach to the same project)
+   - Copy its connection string into the coordinator's `DATABASE_URL` env var
+     (e.g. `postgres://user:pass@<db-container-name>:5432/idlegrid?sslmode=disable`)
+   - Migrations run automatically on coordinator start
+
+6. **Health check** path: `/healthz` (image already defines it).
+7. Press **Deploy**. First build ~1 min.
+8. **Auto-deploy**: in the app's *Webhook* settings, copy the deploy webhook
    into the GitHub repo's Webhooks (or enable the GitHub App auto-deploy
    toggle). Now every push to `main` redeploys.
-8. Verify: `curl -s https://api.sqlguroo.com/healthz` → `ok`, dashboard at
+9. Verify: `curl -s https://api.sqlguroo.com/healthz` → `ok`, dashboard at
    `https://api.sqlguroo.com/`.
+
+**Creating developer accounts** (with `DATABASE_URL` set):
+
+```bash
+curl -X POST https://api.sqlguroo.com/v1/admin/users \
+  -H "Authorization: Bearer <ADMIN_KEY>" -H "Content-Type: application/json" \
+  -d '{"email":"dev@example.com","label":"first dev"}'
+# -> {"user_id":1,"api_key":"sk-ig-..."}  (shown once — hand it to the developer)
+```
 
 **Upgrade** = `git tag vX && git push origin vX` for releases, or just push to
 `main` for auto-deploy. Macs reconnect automatically after restarts.
