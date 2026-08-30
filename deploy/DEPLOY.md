@@ -4,7 +4,7 @@ Target: any Ubuntu 22.04/24.04 VM with a DNS name (tested plan for Hostinger).
 The coordinator is lightweight — 1 vCPU / 2 GB RAM is plenty to start.
 
 ```
-developers ──HTTPS──▶ api.yourdomain.com (Caddy, TLS) ──▶ coordinator :8090
+developers ──HTTPS──▶ api.sqlguroo.com (Caddy, TLS) ──▶ coordinator :8090
 Mac providers ──outbound WSS──────────────────────────────────┘
 ```
 
@@ -32,7 +32,7 @@ identical.
 
 **Swapping to your real domain later** (after buying one):
 
-1. Add an A record: `api.yourdomain.com` → server IP
+1. Add an A record: `api` A record → server IP (registrar where sqlguroo.com is parked)
 2. Edit the one line in `/etc/caddy/Caddyfile` → `systemctl reload caddy`
 3. Providers installed with the old URL keep it in `~/.idlegrid/config.env` —
    re-run the same one-line install command with the new URL (only matters
@@ -81,7 +81,7 @@ openssl rand -hex 8    # -> IDLEGRID_PROVIDER_CODE (give this to Mac owners)
 systemctl daemon-reload
 systemctl enable --now caddy idlegrid
 systemctl status idlegrid --no-pager
-curl -s https://api.yourdomain.com/healthz      # -> ok
+curl -s https://api.sqlguroo.com/healthz      # -> ok
 ```
 
 ## 4. Upgrade to a new release
@@ -96,9 +96,9 @@ Providers reconnect automatically within ~30 s — no Mac-side action needed.
 
 ## 5. Verify
 
-- `curl -s https://api.yourdomain.com/debug/providers` — live node list (no auth)
-- Playground/dashboard: `https://api.yourdomain.com/`
-- Inference: `curl https://api.yourdomain.com/v1/chat/completions -H "Authorization: Bearer <key>" ...`
+- `curl -s https://api.sqlguroo.com/debug/providers` — live node list (no auth)
+- Playground/dashboard: `https://api.sqlguroo.com/`
+- Inference: `curl https://api.sqlguroo.com/v1/chat/completions -H "Authorization: Bearer <key>" ...`
 
 ## Security checklist before inviting strangers
 

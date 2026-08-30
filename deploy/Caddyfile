@@ -1,27 +1,20 @@
 # /etc/caddy/Caddyfile — TLS termination for the idlegrid coordinator.
 # Caddy obtains and renews Let's Encrypt certificates automatically.
 #
-# THE DOMAIN LIVES ONLY HERE. To change it later: edit this one line,
-# then:  systemctl reload caddy
-#
-# ── Testing without buying a domain ─────────────────────────────────────
-# sslip.io is free "magic DNS": any IP-encoded hostname resolves to that IP.
-# For server IP 203.0.113.10 use (dots -> dashes):
-#
-# api.203-0-113-10.sslip.io {
-# 	reverse_proxy localhost:8090
-# }
-#
-# (Even simpler, skip TLS entirely for a first look: providers/devs talk to
-#  http://SERVER_IP:8090 directly and you don't need Caddy at all.)
-# ─────────────────────────────────────────────────────────────────────────
-#
-# Production (bought domain): A record -> server IP, then just this:
-#
-# api.example.com {
-# 	reverse_proxy localhost:8090
-# }
+# ── THE DOMAIN LIVES ONLY IN THIS FILE ──────────────────────────────────
+# Current: api.sqlguroo.com (temporary — real product domain comes later).
+# To swap later: change the two lines below to the new domain, then:
+#     systemctl reload caddy
+# Providers installed with the old URL need the install command re-run with
+# the new URL (one line per Mac; see DEPLOY.md "Swapping domains").
+# ────────────────────────────────────────────────────────────────────────
 
-api.example.com {
+api.sqlguroo.com {
 	reverse_proxy localhost:8090
 }
+
+# Optional: also serve the dashboard on the bare domain.
+# Keep commented if sqlguroo.com will later host the product website.
+# sqlguroo.com {
+# 	reverse_proxy localhost:8090
+# }
