@@ -27,7 +27,7 @@ MacBook Air as the second node.
 ### One-time setup
 
 ```bash
-git clone https://github.com/YOU/idlegrid.git && cd idlegrid
+git clone https://github.com/aiaakash/idlegrid.git && cd idlegrid
 # — or copy the folder, then:  cd idlegrid
 make build        # builds coordinator + provider; first run vendors MLX (~10 min)
 ```
@@ -131,7 +131,7 @@ one command**. No AirDrop, no scp of loose files.
 
 ```bash
 cd ~/React\ Apps/idlegrid
-git remote add origin https://github.com/YOUR-USER/idlegrid.git
+git remote add origin https://github.com/aiaakash/idlegrid.git
 git push -u origin main
 ```
 
@@ -181,8 +181,7 @@ IDLEGRID_PROVIDER_CODE=<join-code>   # Mac owners must present this to join
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/YOUR-USER/idlegrid/main/deploy/install.sh \
-  | bash -s -- --repo YOUR-USER/idlegrid \
-      --server wss://api.yourdomain.com/ws/provider \
+  | bash -s -- --server wss://api.yourdomain.com/ws/provider \
       --code <join-code>
 ```
 

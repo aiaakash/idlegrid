@@ -22,7 +22,7 @@
 #   --uninstall         remove the provider and its LaunchAgent
 set -euo pipefail
 
-REPO="${IDLEGRID_REPO:-}"
+REPO="${IDLEGRID_REPO:-aiaakash/idlegrid}"
 SERVER="" CODE="" MODEL="" NAME="" RELEASE="latest"
 INSTALL_ROOT="$HOME/.idlegrid"
 USE_LAUNCHD=1
