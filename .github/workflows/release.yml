@@ -34,6 +34,10 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Use Python 3.12 (mlx 0.29.1 has no wheels for newer Pythons)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Vendor mlx-swift (pinned revision + no-JIT patch)
         run: ./scripts/bootstrap-mlx.sh
       - name: Fetch matching mlx.metallib (from official mlx wheel)
