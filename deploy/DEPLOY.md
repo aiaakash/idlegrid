@@ -1,4 +1,62 @@
-# Production deployment guide (Ubuntu server)
+# Production deployment guide
+
+Two supported paths:
+
+- **Coolify (recommended if your server already runs it)** — see §A below.
+  Docker-based, automatic TLS via the built-in proxy, git-push deploys.
+- **Plain Ubuntu + systemd + Caddy** — see §B.
+
+Target: any Ubuntu VM (Hostinger works). The coordinator is a stateless
+single binary — 1 vCPU / 2 GB RAM is plenty to start.
+
+```
+developers ──HTTPS──▶ api.sqlguroo.com (TLS proxy) ──▶ coordinator :8090/:8080
+Mac providers ──outbound WSS──────────────────────────────────┘
+```
+
+## 0. Prerequisites
+
+- DNS: an `A` record `api` → server IP (TTL 300), at the registrar where
+  sqlguroo.com is registered
+- A GitHub release (tag push → CI builds it), or `scripts/release.sh vX` locally
+- Server firewall: 22 + 80 + 443 open (Coolify also uses 8000/6001/6002 for its panel)
+
+---
+
+## §A. Deploying with Coolify
+
+The repo root has a `Dockerfile` (multi-stage: Go build → tiny alpine image,
+`/healthz` built in). The coordinator is stateless — no volumes needed.
+
+1. **Connect GitHub** (once): Coolify → *Sources* → connect the GitHub App and
+   grant access to `aiaakash/idlegrid`.
+2. **New Resource** → *Dockerfile* → **Deploy via Dockerfile from a Git
+   repository** → pick `aiaakash/idlegrid`, branch `main`, Dockerfile path `/Dockerfile`.
+3. In the app's **Domain** field: `https://api.sqlguroo.com` — Coolify's proxy
+   issues the Let's Encrypt certificate automatically (WebSocket routing is
+   handled too).
+4. **Environment Variables** (in the app settings):
+   | Name | Value |
+   |---|---|
+   | `IDLEGRID_API_KEYS` | `openssl rand -hex 24` |
+   | `IDLEGRID_PROVIDER_CODE` | `openssl rand -hex 8` (give to Mac owners) |
+   | `PORT` | `8080` (image default) |
+5. **Health check** path: `/healthz` (image already defines it).
+6. Press **Deploy**. First build ~1 min.
+7. **Auto-deploy**: in the app's *Webhook* settings, copy the deploy webhook
+   into the GitHub repo's Webhooks (or enable the GitHub App auto-deploy
+   toggle). Now every push to `main` redeploys.
+8. Verify: `curl -s https://api.sqlguroo.com/healthz` → `ok`, dashboard at
+   `https://api.sqlguroo.com/`.
+
+**Upgrade** = `git tag vX && git push origin vX` for releases, or just push to
+`main` for auto-deploy. Macs reconnect automatically after restarts.
+
+---
+
+## §B. Plain Ubuntu (systemd + Caddy)
+
+(unchanged — the classic path below)
 
 Target: any Ubuntu 22.04/24.04 VM with a DNS name (tested plan for Hostinger).
 The coordinator is lightweight — 1 vCPU / 2 GB RAM is plenty to start.
