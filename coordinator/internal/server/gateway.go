@@ -237,6 +237,7 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 	writeChunk(delta{Role: "assistant"}, nil)
 
 	stop := "stop"
+	var usage protocol.Usage
 	timeout := time.After(120 * time.Second)
 	for {
 		select {
@@ -248,7 +249,23 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 					writeChunk(delta{Content: c.Delta}, nil)
 				}
 			case protocol.TypeInferenceComplete:
+				var done protocol.InferenceComplete
+				if err := env.Decode(&done); err == nil {
+					usage = done.Usage
+				}
 				writeChunk(delta{}, &stop)
+				// OpenAI-style trailing usage chunk (empty choices)
+				json.NewEncoder(w).Encode(map[string]any{
+					"id": id, "object": "chat.completion.chunk",
+					"created": time.Now().Unix(), "model": model,
+					"choices": []any{},
+					"usage": usageStats{
+						PromptTokens:     usage.PromptTokens,
+						CompletionTokens: usage.CompletionTokens,
+						TotalTokens:      usage.PromptTokens + usage.CompletionTokens,
+					},
+				})
+				fmt.Fprint(w, "\n")
 				fmt.Fprint(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				return false

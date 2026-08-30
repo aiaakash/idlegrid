@@ -218,9 +218,14 @@ $("send").onclick = async () => {
   if (!model || !prompt) return;
   btn.disabled = true;
   out.innerHTML = "";
-  const t0 = performance.now();
-  let text = "", usage = null, node = null;
-  const cursor = `<span class="cursor"></span>`;
+    const t0 = performance.now();
+    let text = "", usage = null, node = null, chunkCount = 0;
+    const cursor = `<span class="cursor"></span>`;
+    const liveMeta = () => {
+      const secs = (performance.now() - t0) / 1000;
+      const approxTps = secs > 0.3 ? (chunkCount / secs).toFixed(1) : null;
+      return `<div class="meta">${model} · ${secs.toFixed(1)}s${approxTps ? ` · ≈${approxTps} tok/s` : ""}</div>`;
+    };
   try {
     const resp = await fetch("/v1/chat/completions", {
       method: "POST",
@@ -250,11 +255,11 @@ $("send").onclick = async () => {
         let j; try { j = JSON.parse(payload); } catch { continue; }
         if (j.error) throw new Error(j.error.message);
         const d = j.choices?.[0]?.delta;
-        if (d?.content) text += d.content;
+        if (d?.content) { text += d.content; chunkCount++; }
         if (d?.provider_node) node = d.provider_node;
         if (j.usage) usage = j.usage;
       }
-      out.innerHTML = esc(text) + cursor;
+      out.innerHTML = esc(text) + cursor + liveMeta();
       out.scrollTop = out.scrollHeight;
     }
     const secs = ((performance.now() - t0) / 1000).toFixed(2);

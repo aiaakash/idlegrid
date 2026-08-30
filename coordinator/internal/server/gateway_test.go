@@ -226,9 +226,9 @@ func TestStreamingEndToEnd(t *testing.T) {
 			}
 		}
 	}
-	// role chunk + 3 content chunks + finish chunk + [DONE] = 6 data lines
-	if dataLines != 6 || !sawDone {
-		t.Fatalf("want 6 data lines + [DONE], got %d done=%v", dataLines, sawDone)
+	// role chunk + 3 content chunks + finish chunk + usage chunk + [DONE] = 7
+	if dataLines != 7 || !sawDone {
+		t.Fatalf("want 7 data lines + [DONE], got %d done=%v", dataLines, sawDone)
 	}
 }
 
