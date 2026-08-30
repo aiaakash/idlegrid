@@ -16,6 +16,8 @@ type Config struct {
 	Billing            store.Billing // nil in dev (no DATABASE_URL)
 	PlatformFeePercent int           // provider/platform revenue split (default 10)
 	RequireBalance     bool          // block developers with negative balance (default on)
+	CanaryIntervalSecs int           // 0 = disabled
+	ListenPort         string        // for the canary self-call (defaults 8090)
 }
 
 // NewHandler builds the full coordinator HTTP surface:
@@ -26,16 +28,26 @@ type Config struct {
 //	POST /v1/admin/users        admin: create developer + API key (needs DATABASE_URL)
 //	GET  /healthz               liveness
 //	GET  /debug/providers       registered nodes (auth'd)
+func portForCanary(cfg Config) string {
+	if cfg.ListenPort != "" {
+		return cfg.ListenPort
+	}
+	return "8090"
+}
+
 func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	router := NewRouter()
 	hub := NewHub(reg, router, cfg.JoinCode, cfg.Billing)
 	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing, cfg.PlatformFeePercent, cfg.RequireBalance)
+	if cfg.CanaryIntervalSecs > 0 && len(cfg.APIKeys) > 0 {
+		gateway.StartCanaryLoop(cfg.CanaryIntervalSecs, cfg.APIKeys[0], portForCanary(cfg))
+	}
 	hub.StartSweeper(5 * time.Second)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleDashboard)
 	mux.HandleFunc("/ws/provider", hub.HandleWS)
-	mux.HandleFunc("/v1/chat/completions", gateway.withAuth(gateway.handleChatCompletions))
+	mux.HandleFunc("/v1/chat/completions", gateway.withAuth(gateway.limitInference(gateway.handleChatCompletions)))
 	mux.HandleFunc("/v1/models", gateway.withAuth(gateway.handleModels))
 	mux.HandleFunc("/v1/admin/users", gateway.withAuth(gateway.handleCreateUser))
 	mux.HandleFunc("/v1/admin/prices", gateway.withAuth(gateway.handleSetPrice))

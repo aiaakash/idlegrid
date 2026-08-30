@@ -7,8 +7,10 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"idlegrid/coordinator/internal/e2e"
 	"idlegrid/coordinator/internal/registry"
 	"idlegrid/coordinator/store"
 	"idlegrid/protocol"
@@ -23,6 +25,9 @@ type Gateway struct {
 	Billing            store.Billing   // nil in dev (no DATABASE_URL): env keys only, no metering
 	PlatformFeePercent int
 	RequireBalance     bool // developers need a non-negative balance (default on when billing active)
+
+	e2eRespKeys sync.Map // requestID -> e2e.XKeyPair (gateway side of the response leg)
+	rateLimiter *rateLimiter
 }
 
 func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing, feePercent int, requireBalance bool) *Gateway {
@@ -33,7 +38,9 @@ func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []stri
 	if feePercent < 0 || feePercent > 100 {
 		feePercent = 10
 	}
-	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing, PlatformFeePercent: feePercent, RequireBalance: requireBalance}
+	g := &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing, PlatformFeePercent: feePercent, RequireBalance: requireBalance}
+	g.rateLimiter = newRateLimiter(rateLimitRPS, rateLimitBurst)
+	return g
 }
 
 // ---- request context ----
@@ -218,26 +225,47 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	events := g.Router.Create(reqID)
 	defer g.Router.Resolve(reqID)
 
-	body, _ := json.Marshal(req)
-	env, _ := protocol.New(protocol.TypeInferenceRequest, protocol.InferenceRequest{
+	// E2E: when the node advertises an X25519 key, seal the request body to
+	// it. The coordinator relays prompt ciphertext only.
+	var respKey *e2e.XKeyPair
+	reqProto := protocol.InferenceRequest{
 		RequestID: reqID,
 		Model:     req.Model,
 		Stream:    req.Stream,
-		Body:      body,
-	})
+	}
+	if pub, perr := e2e.PubKeyFromB64(node.PublicKey); perr == nil {
+		body, _ := json.Marshal(req)
+		ephPub, nonce, ct, serr := e2e.Seal(body, pub)
+		if serr == nil {
+			respKey = new(e2e.XKeyPair)
+			*respKey = e2e.GenerateX25519()
+			reqProto.Body = nil
+			reqProto.Encrypted = &protocol.SealedPayload{EphPub: ephPub, Nonce: nonce, Ciphertext: ct}
+			reqProto.ResponseKey = e2e.PubKeyToB64(&respKey.Pub)
+			g.e2eRespKeys.Store(reqID, respKey)
+			defer g.e2eRespKeys.Delete(reqID)
+		} else {
+			log.Printf("[gateway] e2e seal failed (%v) — falling back to plaintext", serr)
+			reqProto.Body, _ = json.Marshal(req)
+		}
+	} else {
+		reqProto.Body, _ = json.Marshal(req)
+	}
+	env, _ := protocol.New(protocol.TypeInferenceRequest, reqProto)
 	if !g.Hub.Send(node.ID, env) {
 		g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, true)
 		openAIError(w, http.StatusBadGateway, "provider connection lost before dispatch", "server_error", "provider_down")
 		return
 	}
+	w.Header().Set("X-Idlegrid-Node", node.ID)
 	log.Printf("[gateway] request %s dispatched to %s (model=%s stream=%v)", reqID, node.ID, req.Model, req.Stream)
 
 	if req.Stream {
-		failed := g.streamResponse(w, r, reqID, req.Model, node.ID, events, outcome)
+		failed := g.streamResponse(w, r, reqID, req.Model, node.ID, node.SignKey, events, respKey, outcome)
 		g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, failed)
 		return
 	}
-	failed := g.collectResponse(w, r, reqID, req.Model, node.ID, events, outcome)
+	failed := g.collectResponse(w, r, reqID, req.Model, node.ID, node.SignKey, events, respKey, outcome)
 	g.finishUsage(r, reqID, req.Model, node.ID, inputChars, outcome, failed)
 }
 
@@ -306,6 +334,63 @@ func (g *Gateway) finishUsage(r *http.Request, reqID, model, nodeID string, inpu
 	}
 }
 
+// unwrapE2E converts an encrypted response envelope into its plaintext
+// equivalent for the existing relay logic. Returns the original envelope
+// when it was not encrypted. Also verifies Ed25519 usage signatures.
+func (g *Gateway) unwrapE2E(env envelope, respKey *e2e.XKeyPair, signKey string) envelope {
+	switch env.Type {
+	case protocol.TypeInferenceChunk:
+		var m protocol.InferenceChunk
+		if env.Decode(&m) != nil || m.Encrypted == nil {
+			return env
+		}
+		inner, err := e2e.Open(m.Encrypted.EphPub, m.Encrypted.Nonce, m.Encrypted.Ciphertext, &respKey.Priv)
+		if err != nil {
+			log.Printf("[gateway] e2e chunk decrypt failed: %v", err)
+			return env
+		}
+		var d protocol.InferenceChunk
+		json.Unmarshal(inner, &d)
+		d.RequestID = m.RequestID
+		out, _ := protocol.New(protocol.TypeInferenceChunk, d)
+		return out
+	case protocol.TypeInferenceComplete:
+		var m protocol.InferenceComplete
+		if env.Decode(&m) != nil || m.Encrypted == nil {
+			return env
+		}
+		inner, err := e2e.Open(m.Encrypted.EphPub, m.Encrypted.Nonce, m.Encrypted.Ciphertext, &respKey.Priv)
+		if err != nil {
+			log.Printf("[gateway] e2e complete decrypt failed: %v", err)
+			return env
+		}
+		var u protocol.InferenceComplete
+		json.Unmarshal(inner, &u)
+		u.RequestID = m.RequestID
+		if m.UsageSignature != "" && signKey != "" && !e2e.Verify(signKey, inner, m.UsageSignature) {
+			log.Printf("[gateway] USAGE SIGNATURE INVALID from node (request %s) — flagged", m.RequestID)
+		}
+		out, _ := protocol.New(protocol.TypeInferenceComplete, u)
+		return out
+	case protocol.TypeInferenceError:
+		var m protocol.InferenceError
+		if env.Decode(&m) != nil || m.Encrypted == nil {
+			return env
+		}
+		inner, err := e2e.Open(m.Encrypted.EphPub, m.Encrypted.Nonce, m.Encrypted.Ciphertext, &respKey.Priv)
+		if err != nil {
+			log.Printf("[gateway] e2e error decrypt failed: %v", err)
+			return env
+		}
+		var e protocol.InferenceError
+		json.Unmarshal(inner, &e)
+		e.RequestID = m.RequestID
+		out, _ := protocol.New(protocol.TypeInferenceError, e)
+		return out
+	}
+	return env
+}
+
 func derefInt(p *int) int {
 	if p == nil {
 		return 0
@@ -315,11 +400,12 @@ func derefInt(p *int) int {
 
 // collectResponse handles non-streaming: buffer chunks, return one JSON body.
 // Returns true if the request failed (drives scheduler cooldown).
-func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope, o *reqOutcome) bool {
+func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID, signKey string, events <-chan envelope, respKey *e2e.XKeyPair, o *reqOutcome) bool {
 	timeout := time.After(120 * time.Second)
 	for {
 		select {
-		case env := <-events:
+		case rawEnv := <-events:
+			env := g.unwrapE2E(rawEnv, respKey, signKey)
 			switch env.Type {
 			case protocol.TypeInferenceChunk:
 				var c protocol.InferenceChunk
@@ -372,7 +458,7 @@ func (g *Gateway) collectResponse(w http.ResponseWriter, r *http.Request, reqID,
 
 // streamResponse handles streaming: relay chunks as OpenAI SSE events.
 // Returns true if the request failed.
-func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID string, events <-chan envelope, o *reqOutcome) bool {
+func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, model, nodeID, signKey string, events <-chan envelope, respKey *e2e.XKeyPair, o *reqOutcome) bool {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		openAIError(w, http.StatusInternalServerError, "streaming unsupported", "server_error", "")
@@ -401,7 +487,8 @@ func (g *Gateway) streamResponse(w http.ResponseWriter, r *http.Request, reqID, 
 	timeout := time.After(120 * time.Second)
 	for {
 		select {
-		case env := <-events:
+		case rawEnv := <-events:
+			env := g.unwrapE2E(rawEnv, respKey, signKey)
 			switch env.Type {
 			case protocol.TypeInferenceChunk:
 				var c protocol.InferenceChunk
@@ -585,4 +672,8 @@ func (g *Gateway) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		openAIError(w, http.StatusUnauthorized, "invalid API key", "auth_error", "invalid_api_key")
 	}
+}
+
+func hexEncodeUint(v uint64) string {
+	return fmt.Sprintf("%d", v)
 }

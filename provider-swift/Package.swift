@@ -10,6 +10,7 @@ let package = Package(
             url: "https://github.com/ml-explore/mlx-swift-examples.git",
             .exactItem("2.29.1")
         ),
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.0.0"),
         // VENDORED override of mlx-swift (same identity) — patched to use the
         // no-JIT Metal kernel path (precompiled mlx.metallib, colocated with
         // the binary). The remote package's JIT kernel path produces garbage
@@ -22,6 +23,7 @@ let package = Package(
             dependencies: [
                 .product(name: "MLXLMCommon", package: "mlx-swift-examples"),
                 .product(name: "MLXLLM", package: "mlx-swift-examples"),
+                .product(name: "Crypto", package: "swift-crypto"),
             ],
             path: "Sources/idlegrid-provider"
         )

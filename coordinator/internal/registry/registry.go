@@ -16,6 +16,10 @@ type Node struct {
 	Version       string
 	MemoryGB      int
 	Models        map[string]bool
+	PublicKey     string // X25519 (base64) — set => E2E-capable
+	SignKey       string // Ed25519 public (base64) — usage signatures
+	CanaryPassed  int
+	CanaryFailed  int
 	LastSeen      time.Time
 	QueueDepth    int   // requests dispatched but not yet finished
 	PendingTokens int   // estimated tokens in flight (admission budget)
@@ -40,7 +44,7 @@ func New() *Registry {
 
 // Register adds or refreshes a node, preserving runtime counters across
 // re-registration (e.g. after a reconnect).
-func (r *Registry) Register(id, name, chip, version string, memGB int, models []string) {
+func (r *Registry) Register(id, name, chip, version string, memGB int, models []string, publicKey, signKey string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n, ok := r.nodes[id]
@@ -49,6 +53,12 @@ func (r *Registry) Register(id, name, chip, version string, memGB int, models []
 		r.nodes[id] = n
 	}
 	n.Name, n.Chip, n.Version, n.MemoryGB = name, chip, version, memGB
+	if publicKey != "" {
+		n.PublicKey = publicKey
+	}
+	if signKey != "" {
+		n.SignKey = signKey
+	}
 	n.Models = make(map[string]bool, len(models))
 	for _, m := range models {
 		n.Models[m] = true
@@ -92,6 +102,19 @@ func (r *Registry) Sweep() []string {
 		delete(r.nodes, id)
 	}
 	return stale
+}
+
+// CanaryResult records a canary probe outcome for reputation.
+func (r *Registry) CanaryResult(id string, passed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if n, ok := r.nodes[id]; ok {
+		if passed {
+			n.CanaryPassed++
+		} else {
+			n.CanaryFailed++
+		}
+	}
 }
 
 // OnlineModels is the union of models servable by live nodes.

@@ -89,7 +89,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	nodeID := reg.NodeID
 
-	h.Reg.Register(nodeID, reg.Name, reg.Chip, reg.Version, reg.MemoryGB, reg.Models)
+	h.Reg.Register(nodeID, reg.Name, reg.Chip, reg.Version, reg.MemoryGB, reg.Models, reg.PublicKey, reg.SigningKey)
 	// Phase 4: bind the node to a user account when an enrollment code is
 	// presented (earnings then flow to that account instead of escrow).
 	if h.Billing != nil && reg.EnrollmentCode != "" {

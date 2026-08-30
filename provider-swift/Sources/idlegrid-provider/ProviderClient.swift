@@ -1,8 +1,10 @@
+import Crypto
 import Foundation
 
 /// WebSocket client that connects out to the coordinator, registers the
 /// node, heartbeats, and serves inference via the in-process MLX backend.
 final class ProviderClient: @unchecked Sendable {
+    private let identity = E2EIdentity()
     private let coordinatorURL: URL
     private let name: String
     private let backend: MLXBackend?
@@ -290,7 +292,24 @@ final class ProviderClient: @unchecked Sendable {
         }
 
         do {
-            guard let body = req.body,
+            var bodyData = req.body
+
+            // E2E: decrypt the sealed prompt; prepare the response leg.
+            var responseEph: Curve25519.KeyAgreement.PrivateKey?
+            let responseKey = req.responseKeyB64
+            if let eph = req.ephPubB64, let nonce = req.nonceB64, let ct = req.ciphertextB64 {
+                do {
+                    bodyData = try E2E.open(ephPubB64: eph, nonceB64: nonce, ctB64: ct, identity: identity)
+                    if responseKey != nil {
+                        responseEph = Curve25519.KeyAgreement.PrivateKey()
+                    }
+                } catch {
+                    sendError(req.requestID, "e2e decrypt failed: \(error.localizedDescription)")
+                    return
+                }
+            }
+
+            guard let body = bodyData,
                   let bodyDict = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
                   let rawMessages = bodyDict["messages"] as? [[String: Any]]
             else {
@@ -307,10 +326,23 @@ final class ProviderClient: @unchecked Sendable {
                 return
             }
 
-            let maxTokens = (bodyDict["max_tokens"] as? Int)
-                ?? (bodyDict["max_tokens"] as? NSNumber)?.intValue
-                ?? defaultMaxTokens
+            let maxTokens = (bodyDict["max_tokens"] as? NSNumber)?.intValue ?? defaultMaxTokens
             let temperature = (bodyDict["temperature"] as? NSNumber)?.floatValue ?? 0.7
+
+            // Seals inner JSON to the gateway response key when E2E is on.
+            func sealedEnvelope(_ inner: [String: Any], type: String, signature: String?) throws -> Envelope {
+                var payload: [String: Any] = ["request_id": req.requestID]
+                if let responseEph, let responseKey {
+                    let data = try JSONSerialization.data(withJSONObject: inner)
+                    let (ephPub, nonce, ct) = try E2E.sealWithEphemeral(data, peerPubB64: responseKey, eph: responseEph)
+                    payload["encrypted"] = SealedPayload(ephPub: ephPub, nonce: nonce, ciphertext: ct).dict
+                    if let signature { payload["usage_signature"] = signature }
+                } else {
+                    payload.merge(inner) { _, new in new }
+                }
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                return Envelope(type: type, data: data)
+            }
 
             let outcome = try await backend.generate(
                 messages: messages,
@@ -319,26 +351,30 @@ final class ProviderClient: @unchecked Sendable {
                 onDelta: { [weak self] delta in
                     guard let self else { return }
                     if Task.isCancelled { return }
-                    let chunk = try? Envelope(
+                    let env = try? sealedEnvelope(
+                        ["delta": delta],
                         type: MessageType.inferenceChunk,
-                        payload: InferenceChunkMessage(requestID: req.requestID, delta: delta)
+                        signature: nil
                     )
-                    if let chunk { try? self.send(chunk) }
+                    if let env { try? self.send(env) }
                 }
             )
 
-            let completion = try Envelope(
+            // Usage report: exact engine counts, Ed25519-signed.
+            let usageInner: [String: Any] = [
+                "prompt_tokens": outcome.usage.promptTokens,
+                "completion_tokens": outcome.usage.completionTokens,
+            ]
+            let usageData = try JSONSerialization.data(withJSONObject: usageInner)
+            let sig = try identity.signing.signature(for: usageData).base64EncodedString()
+
+            let completion = try sealedEnvelope(
+                usageInner,
                 type: MessageType.inferenceComplete,
-                payload: InferenceCompleteMessage(
-                    requestID: req.requestID,
-                    usage: UsageInfo(
-                        promptTokens: outcome.usage.promptTokens,
-                        completionTokens: outcome.usage.completionTokens
-                    )
-                )
+                signature: sig
             )
             try send(completion)
-            print("[provider] req \(req.requestID.prefix(12))… done: \(outcome.usage.promptTokens) in / \(outcome.usage.completionTokens) out tokens")
+            print("[provider] req \(req.requestID.prefix(12))… done: \(outcome.usage.promptTokens) in / \(outcome.usage.completionTokens) out tokens (signed)")
         } catch is CancellationError {
             sendError(req.requestID, "cancelled")
         } catch {

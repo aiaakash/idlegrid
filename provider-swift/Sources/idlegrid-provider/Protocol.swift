@@ -54,6 +54,8 @@ struct RegisterMessage: Codable {
     var version: String
     var joinCode: String?
     var enrollmentCode: String?
+    var publicKey: String?
+    var signingKey: String?
 
     private enum CodingKeys: String, CodingKey {
         case nodeID = "node_id"
@@ -62,6 +64,8 @@ struct RegisterMessage: Codable {
         case models, version
         case joinCode = "join_code"
         case enrollmentCode = "enrollment_code"
+        case publicKey = "public_key"
+        case signingKey = "signing_key"
     }
 }
 
@@ -91,16 +95,15 @@ struct HeartbeatMessage: Codable {
     }
 }
 
-struct InferenceRequestMessage: Codable {
+struct InferenceRequestMessage {
     var requestID: String
     var model: String
     var stream: Bool
     var body: Data?
-
-    private enum CodingKeys: String, CodingKey {
-        case requestID = "request_id"
-        case model, stream, body
-    }
+    var ephPubB64: String?
+    var nonceB64: String?
+    var ciphertextB64: String?
+    var responseKeyB64: String?
 }
 
 struct InferenceAcceptedMessage: Codable {
@@ -151,5 +154,15 @@ struct CancelMessage: Codable {
     var requestID: String
     private enum CodingKeys: String, CodingKey {
         case requestID = "request_id"
+    }
+}
+
+struct SealedPayload {
+    var ephPub: String
+    var nonce: String
+    var ciphertext: String
+
+    var dict: [String: String] {
+        ["eph_pub": ephPub, "nonce": nonce, "ciphertext": ciphertext]
     }
 }

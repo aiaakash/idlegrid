@@ -21,6 +21,12 @@ func main() {
 	port := envOr("PORT", "8090")
 	apiKeys := strings.Split(envOr("IDLEGRID_API_KEYS", "dev-key"), ",")
 	joinCode := os.Getenv("IDLEGRID_PROVIDER_CODE")
+	canaryInterval := 0
+	if v := os.Getenv("IDLEGRID_CANARY_INTERVAL_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			canaryInterval = n
+		}
+	}
 	feePct := 10
 	if v := os.Getenv("IDLEGRID_PLATFORM_FEE_PCT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -34,6 +40,8 @@ func main() {
 		JoinCode:           joinCode,
 		PlatformFeePercent: feePct,
 		RequireBalance:     os.Getenv("IDLEGRID_REQUIRE_BALANCE") != "0",
+		CanaryIntervalSecs: canaryInterval,
+		ListenPort:         port,
 	}
 
 	// Billing store: Postgres when DATABASE_URL is set (production);

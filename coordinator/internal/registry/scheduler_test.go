@@ -12,7 +12,7 @@ func reg(t *testing.T) *Registry {
 
 func TestReserveRequiresResidentModel(t *testing.T) {
 	r := reg(t)
-	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"llama-8b"})
+	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"llama-8b"}, "", "")
 	if _, err := r.Reserve("qwen-7b", 100); err != ErrNoProvider {
 		t.Fatalf("want ErrNoProvider, got %v", err)
 	}
@@ -23,8 +23,8 @@ func TestReserveRequiresResidentModel(t *testing.T) {
 
 func TestReservePicksLeastLoaded(t *testing.T) {
 	r := reg(t)
-	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"})
-	r.Register("b", "B", "M1 Air", "v0", 16, []string{"m"})
+	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"}, "", "")
+	r.Register("b", "B", "M1 Air", "v0", 16, []string{"m"}, "", "")
 
 	first, err := r.Reserve("m", 100)
 	if err != nil {
@@ -43,7 +43,7 @@ func TestReservePicksLeastLoaded(t *testing.T) {
 
 func TestReleaseRestoresCapacity(t *testing.T) {
 	r := reg(t)
-	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"})
+	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"}, "", "")
 	if _, err := r.Reserve("m", 100); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestReleaseRestoresCapacity(t *testing.T) {
 
 func TestFailedRequestPutsNodeInCooldown(t *testing.T) {
 	r := reg(t)
-	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"})
+	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"}, "", "")
 	r.Reserve("m", 100)
 	r.Release("a", 100, true)
 	if _, err := r.Reserve("m", 100); err != ErrNoProvider {
@@ -73,7 +73,7 @@ func TestFailedRequestPutsNodeInCooldown(t *testing.T) {
 
 func TestSweepDropsStaleNodes(t *testing.T) {
 	r := reg(t)
-	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"})
+	r.Register("a", "A", "M4 Pro", "v0", 24, []string{"m"}, "", "")
 	r.mu.Lock()
 	r.nodes["a"].LastSeen = time.Now().Add(-30 * time.Second)
 	r.mu.Unlock()

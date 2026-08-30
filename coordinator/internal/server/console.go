@@ -10,6 +10,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -433,4 +435,69 @@ func (g *Gateway) HandleConsoleEnrollment(w http.ResponseWriter, r *http.Request
 		"enrollment_code": code,
 		"instructions":    "On the Mac you want to enroll, install the provider and add: --enroll-code " + code,
 	})
+}
+
+// StartCanaryLoop periodically sends a known prompt through the normal
+// gateway path and scores whether the response echoed the expected marker.
+// Results feed node canary counters (reputation). Off by default; enable
+// with IDLEGRID_CANARY_INTERVAL_SECS.
+func (g *Gateway) StartCanaryLoop(intervalSecs int, adminKey string, port string) chan struct{} {
+	stop := make(chan struct{})
+	go func() {
+		if intervalSecs <= 0 {
+			return
+		}
+		t := time.NewTicker(time.Duration(intervalSecs) * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				g.runCanary(adminKey, port)
+			}
+		}
+	}()
+	return stop
+}
+
+func (g *Gateway) runCanary(adminKey, port string) {
+	models := g.Reg.OnlineModels()
+	if len(models) == 0 {
+		return
+	}
+	marker := "CANARY-" + newID()[:8]
+	body, _ := json.Marshal(map[string]any{
+		"model":      models[0],
+		"messages":   []map[string]string{{"role": "user", "content": "Reply with exactly: " + marker}},
+		"max_tokens": 30,
+	})
+	req, _ := http.NewRequest("POST", "http://127.0.0.1:"+port+"/v1/chat/completions",
+		strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+adminKey)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer res.Body.Close()
+	nodeID := res.Header.Get("X-Idlegrid-Node")
+	if nodeID == "" {
+		return // request never reached a node
+	}
+	raw, _ := io.ReadAll(res.Body)
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	_ = json.Unmarshal(raw, &parsed)
+	content := ""
+	if len(parsed.Choices) > 0 {
+		content = parsed.Choices[0].Message.Content
+	}
+	passed := strings.Contains(content, marker)
+	g.Reg.CanaryResult(nodeID, passed)
+	log.Printf("[canary] node %s passed=%v", nodeID, passed)
 }

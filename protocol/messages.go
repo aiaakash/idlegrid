@@ -48,6 +48,15 @@ func (e Envelope) Decode(v any) error {
 	return json.Unmarshal(e.Data, v)
 }
 
+// SealedPayload is an E2E-encrypted payload (X25519+HKDF+ChaChaPoly):
+// the sender uses a fresh ephemeral key; the recipient opens with its
+// registered/leg key. All three fields are base64.
+type SealedPayload struct {
+	EphPub     string `json:"eph_pub"`
+	Nonce      string `json:"nonce"`
+	Ciphertext string `json:"ciphertext"`
+}
+
 // Register is the first message a provider sends after connecting.
 type Register struct {
 	NodeID         string   `json:"node_id"` // optional; assigned by coordinator if empty
@@ -58,6 +67,8 @@ type Register struct {
 	Version        string   `json:"version"`
 	JoinCode       string   `json:"join_code,omitempty"`       // required when coordinator sets one
 	EnrollmentCode string   `json:"enrollment_code,omitempty"` // binds node to an account
+	PublicKey      string   `json:"public_key,omitempty"`      // X25519 (base64) — enables E2E
+	SigningKey     string   `json:"signing_key,omitempty"`     // Ed25519 public (base64) — usage signatures
 }
 
 // RegisterDenied rejects a registration attempt (e.g. bad join code).
@@ -84,7 +95,11 @@ type InferenceRequest struct {
 	RequestID string          `json:"request_id"`
 	Model     string          `json:"model"`
 	Stream    bool            `json:"stream"`
-	Body      json.RawMessage `json:"body"`
+	Body      json.RawMessage `json:"body,omitempty"` // plaintext (legacy)
+	Encrypted *SealedPayload  `json:"encrypted,omitempty"`
+	// ResponseKey: gateway's X25519 public key (base64). When present, the
+	// provider seals every response payload to it.
+	ResponseKey string `json:"response_key,omitempty"`
 }
 
 // InferenceAccepted tells the coordinator the node picked the job up.
@@ -94,8 +109,9 @@ type InferenceAccepted struct {
 
 // InferenceChunk streams one delta of generated text.
 type InferenceChunk struct {
-	RequestID string `json:"request_id"`
-	Delta     string `json:"delta"`
+	RequestID string         `json:"request_id"`
+	Delta     string         `json:"delta,omitempty"`
+	Encrypted *SealedPayload `json:"encrypted,omitempty"` // inner: {"delta":"..."}
 }
 
 // Usage reports token counts for metering/billing.
@@ -106,14 +122,19 @@ type Usage struct {
 
 // InferenceComplete terminates a successful request.
 type InferenceComplete struct {
-	RequestID string `json:"request_id"`
-	Usage     Usage  `json:"usage"`
+	RequestID string         `json:"request_id"`
+	Usage     Usage          `json:"usage"`
+	Encrypted *SealedPayload `json:"encrypted,omitempty"` // inner: {"prompt_tokens":N,"completion_tokens":N}
+	// UsageSignature: Ed25519 (base64) over the decrypted inner JSON bytes,
+	// made with the provider's registered signing key.
+	UsageSignature string `json:"usage_signature,omitempty"`
 }
 
 // InferenceError terminates a failed request.
 type InferenceError struct {
-	RequestID string `json:"request_id"`
-	Error     string `json:"error"`
+	RequestID string         `json:"request_id"`
+	Error     string         `json:"error,omitempty"`
+	Encrypted *SealedPayload `json:"encrypted,omitempty"` // inner: {"error":"..."}
 }
 
 // Cancel asks the provider to stop generating for a request.
