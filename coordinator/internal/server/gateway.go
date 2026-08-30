@@ -89,6 +89,12 @@ func (g *Gateway) handleModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": out})
 }
 
+// handleDebugProviders backs the dashboard fleet view (bearer-authenticated).
+func (g *Gateway) handleDebugProviders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(g.Reg.Snapshot())
+}
+
 func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

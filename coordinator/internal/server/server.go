@@ -2,7 +2,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -37,8 +36,6 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	mux.HandleFunc("/debug/providers", func(w http.ResponseWriter, _ *http.Request) {
-		json.NewEncoder(w).Encode(reg.Snapshot())
-	})
+	mux.HandleFunc("/debug/providers", gateway.withAuth(gateway.handleDebugProviders))
 	return mux
 }

@@ -141,7 +141,14 @@ function esc(s) {
 
 async function poll() {
   try {
-    const r = await fetch("/debug/providers");
+    const key = $("apiKey").value.trim();
+    const r = await fetch("/debug/providers", {
+      headers: { "Authorization": "Bearer " + key }
+    });
+    if (r.status === 401) {
+      $("fleet").innerHTML = `<tr><td colspan="7" class="empty">enter a valid API key above to see the fleet</td></tr>`;
+      return;
+    }
     const nodes = await r.json();
     $("coordDot").classList.add("up");
 
