@@ -19,8 +19,16 @@ echo "vendoring mlx-swift @ $REV"
 
 git clone --filter=blob:none https://github.com/ml-explore/mlx-swift.git "$DEST"
 git -C "$DEST" checkout -q "$REV"
+# Source/Cmlx/mlx is a git SUBMODULE (the actual MLX C++ source) — a plain
+# clone leaves it empty. Materialize it at the revision's pinned pointer:
+git -C "$DEST" submodule update --init --recursive --depth 1
 chmod -R u+w "$DEST"
-rm -rf "$DEST/.git"
+rm -rf "$DEST/.git" "$DEST/Source/Cmlx/mlx/.git"
+
+# Verify the critical files actually exist before declaring success.
+test -f "$DEST/Package.swift" || { echo "vendoring failed: Package.swift missing"; exit 1; }
+test -f "$DEST/Source/Cmlx/mlx/mlx/version.h" || { echo "vendoring failed: mlx submodule not materialized"; exit 1; }
+echo "mlx source verified ($(find "$DEST/Source/Cmlx/mlx" -type f | wc -l | tr -d ' ') files)"
 
 # THE PATCH: no-JIT Metal kernels. The JIT path produces garbage generations
 # on CLT 26.6-era toolchains; no-JIT + a matching mlx.metallib is correct
@@ -38,6 +46,6 @@ elif new in src:
     print("already patched")
 else:
     print("WARNING: expected patch site not found — check Package.swift manually")
-    exit 1
+    raise SystemExit(1)
 EOF
 echo "done"
