@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -215,9 +217,22 @@ func (p *PostgresBilling) SettleRequest(ctx context.Context, prm SettleParams, g
 		}
 	}
 
-	// provider credit → platform escrow until node enrollment
+	// provider credit: directly to the enrolled owner, else platform escrow
+	// until the node is enrolled (transferred at enrollment time).
+	var nodeOwner *int64
+	if prm.NodeID != "" {
+		nodeOwner, _ = p.NodeOwner(ctx, prm.NodeID)
+	}
 	if providerCredit > 0 {
-		escrow, err := p.ensureAccountTx(ctx, tx, nil, "provider_earnings")
+		var creditAcct int64
+		var err error
+		transferred := false
+		if nodeOwner != nil {
+			creditAcct, err = p.ensureAccountTx(ctx, tx, nodeOwner, "provider_earnings")
+			transferred = true
+		} else {
+			creditAcct, err = p.ensureAccountTx(ctx, tx, nil, "provider_earnings")
+		}
 		if err != nil {
 			return SettleResult{}, err
 		}
@@ -225,7 +240,12 @@ func (p *PostgresBilling) SettleRequest(ctx context.Context, prm SettleParams, g
 			INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
 			VALUES ($1, 'provider_earning', $2, 'request', $3)
 			ON CONFLICT DO NOTHING`,
-			escrow, providerCredit, prm.RequestID); err != nil {
+			creditAcct, providerCredit, prm.RequestID); err != nil {
+			return SettleResult{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE usage_events SET transferred=$2 WHERE request_id=$1`,
+			prm.RequestID, transferred); err != nil {
 			return SettleResult{}, err
 		}
 	}
@@ -352,7 +372,8 @@ func (p *PostgresBilling) SettlePayout(ctx context.Context, payoutID int64, rail
 		return nil // already settled
 	}
 
-	escrow, err := p.ensureAccountTx(ctx, tx, nil, "provider_earnings")
+	owner := userID
+	payoutAcct, err := p.ensureAccountTx(ctx, tx, &owner, "provider_earnings")
 	if err != nil {
 		return err
 	}
@@ -360,12 +381,112 @@ func (p *PostgresBilling) SettlePayout(ctx context.Context, payoutID int64, rail
 		INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
 		VALUES ($1, 'payout', $2, 'payout', $3)
 		ON CONFLICT DO NOTHING`,
-		escrow, -amount, fmt.Sprintf("%d", payoutID)); err != nil {
+		payoutAcct, -amount, fmt.Sprintf("%d", payoutID)); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE payouts SET status='paid', rail=$2, rail_ref=$3, paid_at=now() WHERE id=$1`,
 		payoutID, rail, railRef); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ---- Phase 4: enrollment + deposits ----
+
+func randomCode(n int) string {
+	b := make([]byte, n)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (p *PostgresBilling) GetOrCreateEnrollmentCode(ctx context.Context, userID int64) (string, error) {
+	var code *string
+	if err := p.pool.QueryRow(ctx,
+		`SELECT enrollment_code FROM users WHERE id=$1`, userID).Scan(&code); err != nil {
+		return "", err
+	}
+	if code != nil && *code != "" {
+		return *code, nil
+	}
+	newCode := randomCode(6) // 12 hex chars
+	var id int64
+	err := p.pool.QueryRow(ctx, `
+		UPDATE users SET enrollment_code=$2 WHERE id=$1 AND enrollment_code IS NULL RETURNING id`,
+		userID, newCode).Scan(&id)
+	if err != nil {
+		// concurrent generation won the race — read the winner
+		if err2 := p.pool.QueryRow(ctx,
+			`SELECT enrollment_code FROM users WHERE id=$1`, userID).Scan(&code); err2 != nil || code == nil {
+			return "", err
+		}
+		return *code, nil
+	}
+	return newCode, nil
+}
+
+func (p *PostgresBilling) EnrollNode(ctx context.Context, code, nodeID string) (int64, bool, error) {
+	var userID int64
+	err := p.pool.QueryRow(ctx,
+		`SELECT id FROM users WHERE enrollment_code=$1`, code).Scan(&userID)
+	if err != nil {
+		return 0, false, nil // unknown code
+	}
+	_, err = p.pool.Exec(ctx, `
+		INSERT INTO provider_nodes (node_id, user_id, enrolled_at, last_seen)
+		VALUES ($1, $2, now(), now())
+		ON CONFLICT (node_id) DO UPDATE SET user_id=EXCLUDED.user_id, enrolled_at=now(), last_seen=now()`,
+		nodeID, userID)
+	if err != nil {
+		return 0, false, err
+	}
+	return userID, true, nil
+}
+
+func (p *PostgresBilling) NodeOwner(ctx context.Context, nodeID string) (*int64, error) {
+	var owner *int64
+	err := p.pool.QueryRow(ctx,
+		`SELECT user_id FROM provider_nodes WHERE node_id=$1`, nodeID).Scan(&owner)
+	if err != nil {
+		return nil, nil // no row = unassigned
+	}
+	return owner, nil
+}
+
+// DodoCredit records a completed deposit and credits the developer balance.
+// Idempotent on the Dodo payment id.
+func (p *PostgresBilling) DodoCredit(ctx context.Context, dodoPaymentID string, userID int64, amountMicro int64, raw []byte) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var already bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM dodo_payments WHERE dodo_payment_id=$1)`, dodoPaymentID).Scan(&already); err != nil {
+		return err
+	}
+	if already {
+		return tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO dodo_payments (dodo_payment_id, user_id, amount_micro, status, raw)
+		VALUES ($1, $2, $3, 'succeeded', $4)`,
+		dodoPaymentID, userID, amountMicro, raw); err != nil {
+		return err
+	}
+
+	devAccount, err := p.ensureAccountTx(ctx, tx, &userID, "developer_balance")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
+		VALUES ($1, 'deposit', $2, 'payment', $3)
+		ON CONFLICT DO NOTHING`,
+		devAccount, amountMicro, dodoPaymentID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

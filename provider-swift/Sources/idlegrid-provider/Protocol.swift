@@ -53,6 +53,7 @@ struct RegisterMessage: Codable {
     var models: [String]
     var version: String
     var joinCode: String?
+    var enrollmentCode: String?
 
     private enum CodingKeys: String, CodingKey {
         case nodeID = "node_id"
@@ -60,6 +61,7 @@ struct RegisterMessage: Codable {
         case memoryGB = "memory_gb"
         case models, version
         case joinCode = "join_code"
+        case enrollmentCode = "enrollment_code"
     }
 }
 

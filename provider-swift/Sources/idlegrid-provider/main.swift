@@ -19,6 +19,7 @@ struct Args {
     var maxTokens = 256
     var name = ""
     var code = ""
+    var enrollCode = ""
     var dryRun = false
 
     static func parse(_ argv: [String]) -> Args? {
@@ -43,6 +44,7 @@ struct Args {
             case "--max-tokens": guard let v = next(argv[i]) else { return nil }; args.maxTokens = Int(v) ?? 256
             case "--name": guard let v = next(argv[i]) else { return nil }; args.name = v
             case "--code": guard let v = next(argv[i]) else { return nil }; args.code = v
+            case "--enroll-code": guard let v = next(argv[i]) else { return nil }; args.enrollCode = v
             case "--dry-run": args.dryRun = true
             case "--help", "-h":
                 print(usage); return nil
@@ -65,6 +67,7 @@ struct Args {
       --max-tokens N      default generation cap when a request omits max_tokens (default 256)
       --name NAME         node name (default: local hostname)
       --code CODE         provider join code (must match coordinator's IDLEGRID_PROVIDER_CODE)
+      --enroll-code CODE  bind this Mac to your account (from the console Provider page)
       --dry-run           register without a loaded model; requests error
     """
 }
@@ -142,7 +145,8 @@ let client = ProviderClient(
     dryRun: args.dryRun,
     session: session,
     defaultMaxTokens: args.maxTokens,
-    joinCode: args.code
+    joinCode: args.code,
+    enrollCode: args.enrollCode
 )
 
 print("[provider] starting; coordinator=\(args.coordinator.absoluteString) dryRun=\(args.dryRun ? "yes" : "no") backend=\(backend != nil ? "in-process MLX" : "none")")

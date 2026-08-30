@@ -50,13 +50,14 @@ func (e Envelope) Decode(v any) error {
 
 // Register is the first message a provider sends after connecting.
 type Register struct {
-	NodeID   string   `json:"node_id"` // optional; assigned by coordinator if empty
-	Name     string   `json:"name"`
-	Chip     string   `json:"chip"`
-	MemoryGB int      `json:"memory_gb"`
-	Models   []string `json:"models"` // models resident and servable right now
-	Version  string   `json:"version"`
-	JoinCode string   `json:"join_code,omitempty"` // required when coordinator sets one
+	NodeID         string   `json:"node_id"` // optional; assigned by coordinator if empty
+	Name           string   `json:"name"`
+	Chip           string   `json:"chip"`
+	MemoryGB       int      `json:"memory_gb"`
+	Models         []string `json:"models"` // models resident and servable right now
+	Version        string   `json:"version"`
+	JoinCode       string   `json:"join_code,omitempty"`       // required when coordinator sets one
+	EnrollmentCode string   `json:"enrollment_code,omitempty"` // binds node to an account
 }
 
 // RegisterDenied rejects a registration attempt (e.g. bad join code).

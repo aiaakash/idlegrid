@@ -5,8 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 
 const links = [
   ["/", "Overview"],
+  ["/topup", "Top-up"],
   ["/keys", "API Keys"],
   ["/usage", "Usage"],
+  ["/provider", "Provider"],
   ["/payouts", "Payouts"],
   ["/admin", "Admin"],
 ];

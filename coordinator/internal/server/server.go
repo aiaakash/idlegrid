@@ -15,6 +15,7 @@ type Config struct {
 	JoinCode           string        // when set, providers must present it at register
 	Billing            store.Billing // nil in dev (no DATABASE_URL)
 	PlatformFeePercent int           // provider/platform revenue split (default 10)
+	RequireBalance     bool          // block developers with negative balance (default on)
 }
 
 // NewHandler builds the full coordinator HTTP surface:
@@ -27,8 +28,8 @@ type Config struct {
 //	GET  /debug/providers       registered nodes (auth'd)
 func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	router := NewRouter()
-	hub := NewHub(reg, router, cfg.JoinCode)
-	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing, cfg.PlatformFeePercent)
+	hub := NewHub(reg, router, cfg.JoinCode, cfg.Billing)
+	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing, cfg.PlatformFeePercent, cfg.RequireBalance)
 	hub.StartSweeper(5 * time.Second)
 
 	mux := http.NewServeMux()
@@ -55,6 +56,10 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	mux.HandleFunc("/v1/console/admin/users", gateway.requireAdminSession(gateway.HandleConsoleAdminUsers))
 	mux.HandleFunc("/v1/console/admin/prices", gateway.requireAdminSession(gateway.HandleConsoleAdminPrices))
 	mux.HandleFunc("/v1/console/admin/payouts", gateway.requireAdminSession(gateway.HandleConsoleAdminPayouts))
+	mux.HandleFunc("/v1/console/enrollment", gateway.requireSession(gateway.HandleConsoleEnrollment))
+	mux.HandleFunc("/v1/console/topup", gateway.requireSession(gateway.HandleDodoTopup))
+	mux.HandleFunc("/v1/dodo/topup", gateway.requireSession(gateway.HandleDodoTopup))
+	mux.HandleFunc("/v1/dodo/webhook", gateway.HandleDodoWebhook)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

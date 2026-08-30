@@ -22,9 +22,10 @@ type Gateway struct {
 	APIKeys            map[string]bool // env keys = admin
 	Billing            store.Billing   // nil in dev (no DATABASE_URL): env keys only, no metering
 	PlatformFeePercent int
+	RequireBalance     bool // developers need a non-negative balance (default on when billing active)
 }
 
-func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing, feePercent int) *Gateway {
+func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing, feePercent int, requireBalance bool) *Gateway {
 	keys := make(map[string]bool, len(apiKeys))
 	for _, k := range apiKeys {
 		keys[k] = true
@@ -32,7 +33,7 @@ func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []stri
 	if feePercent < 0 || feePercent > 100 {
 		feePercent = 10
 	}
-	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing, PlatformFeePercent: feePercent}
+	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing, PlatformFeePercent: feePercent, RequireBalance: requireBalance}
 }
 
 // ---- request context ----
@@ -189,6 +190,18 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 		inputChars += len(m.Content)
 	}
 	outcome := &reqOutcome{status: "completed", estIn: store.EstimateTokens(strings.Repeat("x", inputChars))}
+
+	// 0. Balance guard: prepaid model — developers with a negative balance
+	// are blocked until they top up. Admin keys bypass.
+	if g.RequireBalance && g.Billing != nil {
+		if uid := userIDFrom(r.Context()); uid != nil {
+			if bal, err := g.Billing.AccountBalance(r.Context(), uid, "developer_balance"); err == nil && bal < -store.MinChargeMicro {
+				openAIError(w, http.StatusPaymentRequired,
+					"insufficient balance — top up at https://console.sqlguroo.com", "insufficient_quota", "insufficient_balance")
+				return
+			}
+		}
+	}
 
 	// 1. Schedule: pick the least-loaded provider with the model resident
 	// and atomically reserve capacity.

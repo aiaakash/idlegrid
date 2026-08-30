@@ -16,6 +16,7 @@ final class ProviderClient: @unchecked Sendable {
     private var queueDepth = 0
     private var inflight: [String: Task<Void, Never>] = [:]
     private let joinCode: String
+    private let enrollCode: String
     // Set when the coordinator permanently rejects us (e.g. bad join code):
     // stop reconnecting and exit instead.
     private var fatalRegistration = false
@@ -29,7 +30,7 @@ final class ProviderClient: @unchecked Sendable {
     private var heartbeatTimer: DispatchSourceTimer?
 
     init(coordinatorURL: URL, name: String, backend: MLXBackend?,
-         dryRun: Bool, session: URLSession, defaultMaxTokens: Int, joinCode: String) {
+         dryRun: Bool, session: URLSession, defaultMaxTokens: Int, joinCode: String, enrollCode: String) {
         self.coordinatorURL = coordinatorURL
         self.name = name
         self.backend = backend
@@ -37,6 +38,7 @@ final class ProviderClient: @unchecked Sendable {
         self.session = session
         self.defaultMaxTokens = defaultMaxTokens
         self.joinCode = joinCode
+        self.enrollCode = enrollCode
         self.nodeID = name.lowercased().replacingOccurrences(of: " ", with: "-")
             + "-" + String(Int.random(in: 0x1000...0xffff), radix: 16)
     }
@@ -85,7 +87,8 @@ final class ProviderClient: @unchecked Sendable {
             memoryGB: Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)),
             models: [backend?.modelName ?? modelNameFallback],
             version: "v0.3.0-mlx",
-            joinCode: joinCode.isEmpty ? nil : joinCode
+            joinCode: joinCode.isEmpty ? nil : joinCode,
+            enrollmentCode: enrollCode.isEmpty ? nil : enrollCode
         )
         let regEnv = try Envelope(type: MessageType.register, payload: reg)
         try send(regEnv)

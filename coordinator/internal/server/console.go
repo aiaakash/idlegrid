@@ -142,6 +142,9 @@ func (g *Gateway) HandleConsoleMe(w http.ResponseWriter, r *http.Request, u stor
 		if bal, err := g.Billing.AccountBalance(r.Context(), &uid, "developer_balance"); err == nil {
 			out["developer_balance_micro"] = bal
 		}
+		if earn, err := g.Billing.AccountBalance(r.Context(), &uid, "provider_earnings"); err == nil {
+			out["provider_earnings_micro"] = earn
+		}
 		if u.Role == "admin" {
 			escrow, _ := g.Billing.AccountBalance(r.Context(), nil, "provider_earnings")
 			rev, _ := g.Billing.AccountBalance(r.Context(), nil, "platform_revenue")
@@ -412,4 +415,22 @@ func (g *Gateway) HandleConsoleAdminPayouts(w http.ResponseWriter, r *http.Reque
 	default:
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method"})
 	}
+}
+
+// HandleConsoleEnrollment: GET the user's provider enrollment code (+ how to
+// use it). Providers present it with --enroll-code at registration.
+func (g *Gateway) HandleConsoleEnrollment(w http.ResponseWriter, r *http.Request, u store.APIKeyAuth) {
+	cs, ok := g.consoleStore(w, r)
+	if !ok {
+		return
+	}
+	code, err := cs.GetOrCreateEnrollmentCode(r.Context(), u.UserID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enrollment_code": code,
+		"instructions":    "On the Mac you want to enroll, install the provider and add: --enroll-code " + code,
+	})
 }

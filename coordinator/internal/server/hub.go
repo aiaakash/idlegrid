@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"idlegrid/coordinator/internal/registry"
+	"idlegrid/coordinator/store"
 	"idlegrid/protocol"
 )
 
@@ -29,17 +30,19 @@ type Hub struct {
 	// JoinCode, when non-empty, must be presented by every provider at
 	// registration (gates who can join the network).
 	JoinCode string
+	Billing  store.Billing // nil in dev; enables node enrollment on register
 
 	mu       sync.Mutex
 	conns    map[string]chan envelope   // nodeID -> outbound queue
 	inflight map[string]map[string]bool // nodeID -> requestID set
 }
 
-func NewHub(reg *registry.Registry, router *Router, joinCode string) *Hub {
+func NewHub(reg *registry.Registry, router *Router, joinCode string, billing store.Billing) *Hub {
 	return &Hub{
 		Reg:      reg,
 		Router:   router,
 		JoinCode: joinCode,
+		Billing:  billing,
 		conns:    make(map[string]chan envelope),
 		inflight: make(map[string]map[string]bool),
 	}
@@ -87,6 +90,17 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	nodeID := reg.NodeID
 
 	h.Reg.Register(nodeID, reg.Name, reg.Chip, reg.Version, reg.MemoryGB, reg.Models)
+	// Phase 4: bind the node to a user account when an enrollment code is
+	// presented (earnings then flow to that account instead of escrow).
+	if h.Billing != nil && reg.EnrollmentCode != "" {
+		if cs, ok := h.Billing.(store.ConsoleStore); ok {
+			if owner, enrolled, err := cs.EnrollNode(r.Context(), reg.EnrollmentCode, nodeID); err == nil && enrolled {
+				log.Printf("[hub] node %s enrolled to user %d", nodeID, owner)
+			} else if err != nil {
+				log.Printf("[hub] enrollment failed for %s: %v", nodeID, err)
+			}
+		}
+	}
 	log.Printf("[hub] provider registered: id=%s name=%q chip=%s mem=%dGB models=%v",
 		nodeID, reg.Name, reg.Chip, reg.MemoryGB, reg.Models)
 

@@ -24,8 +24,23 @@ type ConsoleStore interface {
 	CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64) (int64, error)
 	ListPayouts(ctx context.Context, userID *int64) ([]PayoutRow, error)
 	MarkPayout(ctx context.Context, payoutID int64, status, rail, railRef string) error
-	// SettlePayout marks a payout paid and records the escrow debit atomically.
+	// SettlePayout marks a payout paid and records the debit from the
+	// provider owner's earnings account, atomically.
 	SettlePayout(ctx context.Context, payoutID int64, rail, railRef string) error
+
+	// --- Phase 4: enrollment + deposits ---
+
+	// GetOrCreateEnrollmentCode returns the user's provider enrollment code,
+	// generating it on first use.
+	GetOrCreateEnrollmentCode(ctx context.Context, userID int64) (string, error)
+	// EnrollNode binds a provider node to the user owning the code. Returns
+	// the owning user id. Unknown code -> ok=false.
+	EnrollNode(ctx context.Context, code, nodeID string) (userID int64, ok bool, err error)
+	// NodeOwner returns the account a node is enrolled to (nil = unassigned).
+	NodeOwner(ctx context.Context, nodeID string) (*int64, error)
+	// DodoCredit records a completed Dodo payment and credits the user's
+	// developer balance. Idempotent on dodoPaymentID.
+	DodoCredit(ctx context.Context, dodoPaymentID string, userID int64, amountMicro int64, raw []byte) error
 }
 
 // KeyRow is a listed API key (never the plaintext).

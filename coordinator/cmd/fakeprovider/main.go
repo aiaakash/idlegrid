@@ -27,6 +27,7 @@ func main() {
 	tokens := flag.Int("tokens", 24, "tokens per fake completion")
 	delayMS := flag.Int("delay-ms", 30, "simulated decode delay per token")
 	code := flag.String("code", "", "provider join code (if coordinator requires one)")
+	enroll := flag.String("enroll", "", "enrollment code to bind this node to your account")
 	flag.Parse()
 
 	if *count <= 0 {
@@ -40,7 +41,7 @@ func main() {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			runNode(ctx, fmt.Sprintf("fake-%02d", i), *coordURL, splitModels(*models), *tokens, *delayMS, *code)
+			runNode(ctx, fmt.Sprintf("fake-%02d", i), *coordURL, splitModels(*models), *tokens, *delayMS, *code, *enroll)
 		}(i)
 	}
 	wg.Wait()
@@ -79,10 +80,10 @@ type fakeNode struct {
 	cancels map[string]context.CancelFunc
 }
 
-func runNode(ctx context.Context, name, coordURL string, models []string, tokens, delayMS int, code string) {
+func runNode(ctx context.Context, name, coordURL string, models []string, tokens, delayMS int, code, enroll string) {
 	backoff := time.Second
 	for ctx.Err() == nil {
-		if err := runOnce(ctx, name, coordURL, models, tokens, delayMS, code); err != nil {
+		if err := runOnce(ctx, name, coordURL, models, tokens, delayMS, code, enroll); err != nil {
 			log.Printf("[%s] disconnected: %v (retrying in %s)", name, err, backoff)
 		}
 		select {
@@ -101,7 +102,7 @@ func min(a, b time.Duration) time.Duration {
 	return b
 }
 
-func runOnce(ctx context.Context, name, coordURL string, models []string, tokens, delayMS int, code string) error {
+func runOnce(ctx context.Context, name, coordURL string, models []string, tokens, delayMS int, code, enroll string) error {
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	conn, _, err := dialer.DialContext(ctx, coordURL, nil)
 	if err != nil {
@@ -113,13 +114,14 @@ func runOnce(ctx context.Context, name, coordURL string, models []string, tokens
 	node.nodeID = fmt.Sprintf("%s-%04x", name, rand.Intn(0xffff))
 
 	reg, _ := protocol.New(protocol.TypeRegister, protocol.Register{
-		NodeID:   node.nodeID,
-		Name:     name,
-		Chip:     "Simulated M9 Ultra",
-		MemoryGB: 256,
-		Models:   models,
-		Version:  "v0.3.0-fake",
-		JoinCode: code,
+		NodeID:         node.nodeID,
+		Name:           name,
+		Chip:           "Simulated M9 Ultra",
+		MemoryGB:       256,
+		Models:         models,
+		Version:        "v0.3.0-fake",
+		JoinCode:       code,
+		EnrollmentCode: enroll,
 	})
 	if err := conn.WriteJSON(reg); err != nil {
 		return fmt.Errorf("register: %w", err)

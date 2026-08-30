@@ -33,6 +33,7 @@ func main() {
 		APIKeys:            apiKeys,
 		JoinCode:           joinCode,
 		PlatformFeePercent: feePct,
+		RequireBalance:     os.Getenv("IDLEGRID_REQUIRE_BALANCE") != "0",
 	}
 
 	// Billing store: Postgres when DATABASE_URL is set (production);
