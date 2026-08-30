@@ -31,7 +31,10 @@ jobs:
           path: dist/
 
   provider-macos:
-    runs-on: macos-14
+    # macos-15: default Xcode 16+ (SwiftPM 6). The dependency graph needs
+    # SwiftPM 6's permissive tools-version resolution (swift-jinja 2.x
+    # requires tools 6.0 while our root manifest declares 5.9).
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Use Python 3.12 (mlx 0.29.1 has no wheels for newer Pythons)
