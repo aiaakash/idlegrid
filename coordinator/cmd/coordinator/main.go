@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,11 +21,18 @@ func main() {
 	port := envOr("PORT", "8090")
 	apiKeys := strings.Split(envOr("IDLEGRID_API_KEYS", "dev-key"), ",")
 	joinCode := os.Getenv("IDLEGRID_PROVIDER_CODE")
+	feePct := 10
+	if v := os.Getenv("IDLEGRID_PLATFORM_FEE_PCT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			feePct = n
+		}
+	}
 
 	reg := registry.New()
 	cfg := server.Config{
-		APIKeys:  apiKeys,
-		JoinCode: joinCode,
+		APIKeys:            apiKeys,
+		JoinCode:           joinCode,
+		PlatformFeePercent: feePct,
 	}
 
 	// Billing store: Postgres when DATABASE_URL is set (production);

@@ -11,9 +11,10 @@ import (
 
 // Config for NewHandler.
 type Config struct {
-	APIKeys  []string
-	JoinCode string        // when set, providers must present it at register
-	Billing  store.Billing // nil in dev (no DATABASE_URL)
+	APIKeys            []string
+	JoinCode           string        // when set, providers must present it at register
+	Billing            store.Billing // nil in dev (no DATABASE_URL)
+	PlatformFeePercent int           // provider/platform revenue split (default 10)
 }
 
 // NewHandler builds the full coordinator HTTP surface:
@@ -27,7 +28,7 @@ type Config struct {
 func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	router := NewRouter()
 	hub := NewHub(reg, router, cfg.JoinCode)
-	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing)
+	gateway := NewGateway(reg, hub, router, cfg.APIKeys, cfg.Billing, cfg.PlatformFeePercent)
 	hub.StartSweeper(5 * time.Second)
 
 	mux := http.NewServeMux()
@@ -36,6 +37,10 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	mux.HandleFunc("/v1/chat/completions", gateway.withAuth(gateway.handleChatCompletions))
 	mux.HandleFunc("/v1/models", gateway.withAuth(gateway.handleModels))
 	mux.HandleFunc("/v1/admin/users", gateway.withAuth(gateway.handleCreateUser))
+	mux.HandleFunc("/v1/admin/prices", gateway.withAuth(gateway.handleSetPrice))
+	mux.HandleFunc("/v1/pricing", gateway.handlePricing)
+	mux.HandleFunc("/v1/usage", gateway.withAuth(gateway.handleUsage))
+	mux.HandleFunc("/v1/balance", gateway.withAuth(gateway.handleBalance))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))

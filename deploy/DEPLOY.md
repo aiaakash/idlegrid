@@ -42,6 +42,7 @@ The repo root has a `Dockerfile` (multi-stage: Go build → tiny alpine image,
    | `IDLEGRID_PROVIDER_CODE` | `openssl rand -hex 8` (give to Mac owners) |
    | `PORT` | `8080` (image default) |
    | `DATABASE_URL` | see "Postgres" below — enables billing/metering |
+   | `IDLEGRID_PLATFORM_FEE_PCT` | `10` (your revenue share; providers get 90%) |
 
 5. **Postgres** (billing store — required for metering + per-user keys):
    - Coolify → **New Resource → Database → PostgreSQL** (same server, attach to the same project)

@@ -16,19 +16,23 @@ import (
 
 // Gateway is the developer-facing, OpenAI-compatible HTTP API.
 type Gateway struct {
-	Reg     *registry.Registry
-	Hub     *Hub
-	Router  *Router
-	APIKeys map[string]bool // env keys = admin
-	Billing store.Billing   // nil in dev (no DATABASE_URL): env keys only, no metering
+	Reg                *registry.Registry
+	Hub                *Hub
+	Router             *Router
+	APIKeys            map[string]bool // env keys = admin
+	Billing            store.Billing   // nil in dev (no DATABASE_URL): env keys only, no metering
+	PlatformFeePercent int
 }
 
-func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing) *Gateway {
+func NewGateway(reg *registry.Registry, hub *Hub, router *Router, apiKeys []string, billing store.Billing, feePercent int) *Gateway {
 	keys := make(map[string]bool, len(apiKeys))
 	for _, k := range apiKeys {
 		keys[k] = true
 	}
-	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing}
+	if feePercent < 0 || feePercent > 100 {
+		feePercent = 10
+	}
+	return &Gateway{Reg: reg, Hub: hub, Router: router, APIKeys: keys, Billing: billing, PlatformFeePercent: feePercent}
 }
 
 // ---- request context ----
@@ -155,6 +159,7 @@ func (g *Gateway) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 type reqOutcome struct {
 	text    strings.Builder
 	status  string // completed | failed | cancelled | timeout
+	estIn   int
 	provIn  *int
 	provOut *int
 }
@@ -183,7 +188,7 @@ func (g *Gateway) handleChatCompletions(w http.ResponseWriter, r *http.Request) 
 	for _, m := range req.Messages {
 		inputChars += len(m.Content)
 	}
-	outcome := &reqOutcome{status: "completed"}
+	outcome := &reqOutcome{status: "completed", estIn: store.EstimateTokens(strings.Repeat("x", inputChars))}
 
 	// 1. Schedule: pick the least-loaded provider with the model resident
 	// and atomically reserve capacity.
@@ -231,22 +236,60 @@ func (g *Gateway) finishUsage(r *http.Request, reqID, model, nodeID string, inpu
 	if failed && o.status == "completed" {
 		o.status = "failed"
 	}
+	estIn := store.EstimateTokens(strings.Repeat("x", inputChars))
+	estOut := store.EstimateTokens(o.text.String())
 	ev := store.UsageEvent{
 		RequestID:       reqID,
 		UserID:          userIDFrom(r.Context()),
 		NodeID:          nodeID,
 		Model:           model,
-		EstInputTokens:  store.EstimateTokens(strings.Repeat("x", inputChars)),
-		EstOutputTokens: store.EstimateTokens(o.text.String()),
+		EstInputTokens:  estIn,
+		EstOutputTokens: estOut,
 		ProviderInput:   o.provIn,
 		ProviderOutput:  o.provOut,
-		WithinTolerance: store.CountsMatch(store.EstimateTokens(o.text.String()), derefInt(o.provOut)),
+		WithinTolerance: store.CountsMatch(estOut, derefInt(o.provOut)),
 		Status:          o.status,
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	if err := g.Billing.RecordUsage(ctx, ev); err != nil {
 		log.Printf("[gateway] RecordUsage %s: %v", reqID, err)
+		return
+	}
+
+	// Settle: provider counts win when inside tolerance, else the estimate.
+	in, out := estIn, estOut
+	if o.provIn != nil && store.CountsMatch(estIn, *o.provIn) {
+		in = *o.provIn
+	}
+	if o.provOut != nil && store.CountsMatch(estOut, *o.provOut) {
+		out = *o.provOut
+	}
+	inRate, outRate, err := store.PriceFor(ctx, g.Billing, model)
+	if err != nil {
+		log.Printf("[gateway] PriceFor %s: %v", model, err)
+		return
+	}
+	gross := store.GrossMicro(int64(in), int64(out), inRate, outRate)
+	if gross == 0 {
+		return // nothing generated (e.g. failed before first token): free
+	}
+	credit, fee := store.SplitProviderFee(gross, g.PlatformFeePercent)
+	res, err := g.Billing.SettleRequest(ctx, store.SettleParams{
+		RequestID:    reqID,
+		UserID:       userIDFrom(r.Context()),
+		NodeID:       nodeID,
+		Model:        model,
+		InputTokens:  in,
+		OutputTokens: out,
+	}, gross, credit, fee)
+	if err != nil {
+		log.Printf("[gateway] SettleRequest %s: %v", reqID, err)
+		return
+	}
+	if !res.AlreadySettled {
+		log.Printf("[gateway] settled %s: gross=%d micro (provider %d / platform %d, %d/%d tok)",
+			reqID, res.Gross, res.ProviderCredit, res.PlatformFee, in, out)
 	}
 }
 
@@ -406,6 +449,105 @@ func mustEnvelope(t string, payload any) envelope {
 		panic(err)
 	}
 	return env
+}
+
+// handlePricing is public: what the platform charges per model.
+func (g *Gateway) handlePricing(w http.ResponseWriter, r *http.Request) {
+	defaults := []map[string]any{{
+		"model":               "default",
+		"input_micro_per_1m":  store.DefaultInputMicroPer1M,
+		"output_micro_per_1m": store.DefaultOutputMicroPer1M,
+	}}
+	overrides := []store.ModelPriceRow{}
+	if g.Billing != nil {
+		if rows, err := g.Billing.ListModelPrices(r.Context()); err == nil {
+			overrides = rows
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"defaults": defaults, "overrides": overrides,
+		"unit": "micro-USD per 1M tokens",
+	})
+}
+
+// handleSetPrice is the admin pricing override.
+func (g *Gateway) handleSetPrice(w http.ResponseWriter, r *http.Request) {
+	if !isAdminFrom(r.Context()) {
+		openAIError(w, http.StatusForbidden, "admin key required", "auth_error", "admin_only")
+		return
+	}
+	if g.Billing == nil {
+		openAIError(w, http.StatusServiceUnavailable, "billing store unavailable", "server_error", "no_db")
+		return
+	}
+	var body struct {
+		Model    string `json:"model"`
+		InMicro  int64  `json:"input_micro_per_1m"`
+		OutMicro int64  `json:"output_micro_per_1m"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Model == "" || body.InMicro <= 0 || body.OutMicro <= 0 {
+		openAIError(w, http.StatusBadRequest, `body must be {"model":"...","input_micro_per_1m":N,"output_micro_per_1m":N}`, "invalid_request_error", "")
+		return
+	}
+	if err := g.Billing.UpsertModelPrice(r.Context(), body.Model, body.InMicro, body.OutMicro); err != nil {
+		openAIError(w, http.StatusInternalServerError, err.Error(), "server_error", "")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "model": body.Model})
+}
+
+// handleUsage: developers see their own rows; admins see everything (?all=1).
+func (g *Gateway) handleUsage(w http.ResponseWriter, r *http.Request) {
+	if g.Billing == nil {
+		openAIError(w, http.StatusServiceUnavailable, "billing store unavailable", "server_error", "no_db")
+		return
+	}
+	var uid *int64
+	if !isAdminFrom(r.Context()) || r.URL.Query().Get("all") != "1" {
+		uid = userIDFrom(r.Context())
+	}
+	rows, err := g.Billing.UsageRows(r.Context(), uid, 100)
+	if err != nil {
+		openAIError(w, http.StatusInternalServerError, err.Error(), "server_error", "")
+		return
+	}
+	if rows == nil {
+		rows = []store.UsageRow{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"usage": rows})
+}
+
+// handleBalance: the caller's developer balance (admins get platform totals).
+func (g *Gateway) handleBalance(w http.ResponseWriter, r *http.Request) {
+	if g.Billing == nil {
+		openAIError(w, http.StatusServiceUnavailable, "billing store unavailable", "server_error", "no_db")
+		return
+	}
+	ctx := r.Context()
+	if isAdminFrom(ctx) {
+		escrow, _ := g.Billing.AccountBalance(ctx, nil, "provider_earnings")
+		rev, _ := g.Billing.AccountBalance(ctx, nil, "platform_revenue")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"scope":                          "platform",
+			"provider_earnings_escrow_micro": escrow,
+			"platform_revenue_micro":         rev,
+		})
+		return
+	}
+	uid := userIDFrom(ctx)
+	bal, err := g.Billing.AccountBalance(ctx, uid, "developer_balance")
+	if err != nil {
+		openAIError(w, http.StatusInternalServerError, err.Error(), "server_error", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"scope": "developer", "balance_micro": bal,
+	})
 }
 
 // withAuth enforces bearer keys: env keys are admin; DB keys are per-user.
