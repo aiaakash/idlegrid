@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idlegrid console</title>
+<style>
+  :root {
+    --bg: #0a0a0f; --panel: #12121a; --panel2: #16161f; --border: #23232f;
+    --text: #e4e4ec; --dim: #8b8b9e; --accent: #6c7bff; --accent2: #22d3ee;
+    --green: #34d399; --red: #f87171; --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "SF Pro Text", Inter, sans-serif;
+    padding: 28px 32px; max-width: 1200px; margin: 0 auto;
+  }
+  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 22px; }
+  h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  h1 span { background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { color: var(--dim); font-size: 12px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+    font-size: 12px; color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .dot.up { background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-bottom: 24px; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; }
+  .stat .label { color: var(--dim); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.08em; margin-bottom: 4px; }
+  .stat .value { font-size: 24px; font-weight: 700; font-family: var(--mono); }
+  .stat .value small { font-size: 12px; color: var(--dim); font-weight: 400; }
+
+  .grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim); padding: 12px 16px; border-bottom: 1px solid var(--border);
+    background: var(--panel2); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--dim); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 8px 16px;
+    border-bottom: 1px solid var(--border); }
+  td { padding: 9px 16px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--mono); font-size: 12px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px;
+    border: 1px solid var(--border); color: var(--dim); margin-right: 4px; }
+  .badge.model { border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: #a5b0ff; }
+  .dot.cell { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+  .dot.cell.up { background: var(--green); }
+  .dot.cell.stale { background: var(--red); }
+  .empty { color: var(--dim); text-align: center; padding: 28px 16px; font-size: 13px; }
+
+  .chat { display: flex; flex-direction: column; }
+  .chat .fields { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px;
+    border-bottom: 1px solid var(--border); }
+  select, textarea, input[type="password"] {
+    width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font: inherit; outline: none;
+  }
+  select:focus, textarea:focus, input:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 64px; }
+  .row { display: flex; gap: 10px; }
+  button {
+    background: linear-gradient(90deg, var(--accent), #7c5cff); border: none;
+    color: #fff; font-weight: 600; font-size: 13px; padding: 9px 18px;
+    border-radius: 8px; cursor: pointer; white-space: nowrap;
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  .out { padding: 16px; min-height: 220px; max-height: 420px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word; font-size: 13.5px; }
+  .out .meta { color: var(--dim); font-size: 12px; margin-top: 14px;
+    font-family: var(--mono); }
+  .err { color: var(--red); }
+  .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent2);
+    vertical-align: text-bottom; animation: blink 0.9s infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .spark { display: flex; align-items: flex-end; gap: 2px; height: 34px; margin-top: 6px; }
+  .spark i { width: 4px; background: var(--accent); border-radius: 1px;
+    min-height: 1px; opacity: 0.85; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>idlegrid</span> console</h1>
+  <div class="sub">private inference on idle Macs — MVP</div>
+  <div class="status"><span class="dot" id="coordDot"></span> coordinator</div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="label">Providers online</div><div class="value" id="sNodes">–</div></div>
+  <div class="stat"><div class="label">Models servable</div><div class="value" id="sModels">–</div></div>
+  <div class="stat"><div class="label">Requests served</div><div class="value" id="sReqs">–</div></div>
+  <div class="stat"><div class="label">Req/min <small>last 60s</small></div>
+    <div class="value" id="sRate">–</div>
+    <div class="spark" id="spark"></div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>Fleet — registered providers</h2>
+    <table>
+      <thead><tr><th></th><th>Node</th><th>Chip</th><th>Mem</th><th>Queue</th><th>Reqs</th><th>Models</th></tr></thead>
+      <tbody id="fleet"><tr><td colspan="7" class="empty">no providers registered</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card chat">
+    <h2>Playground</h2>
+    <div class="fields">
+      <select id="modelSel"><option>loading models…</option></select>
+      <div class="row">
+        <input type="password" id="apiKey" placeholder="API key" value="dev-key">
+      </div>
+      <textarea id="prompt" placeholder="Ask something…">Say hello in exactly five words.</textarea>
+      <div class="row"><button id="send">Send</button></div>
+    </div>
+    <div class="out" id="out"><span class="empty">Response streams here.</span></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STALE_MS = 15000;
+let lastTotal = null;
+const rateHistory = new Array(40).fill(0);
+
+function esc(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/debug/providers");
+    const nodes = await r.json();
+    $("coordDot").classList.add("up");
+
+    const now = Date.now();
+    const online = nodes.filter(n => now - Date.parse(n.LastSeen) < STALE_MS);
+    $("sNodes").textContent = online.length;
+    const models = new Set();
+    online.forEach(n => Object.keys(n.Models || {}).forEach(m => models.add(m)));
+    $("sModels").textContent = models.size;
+    const total = nodes.reduce((a, n) => a + (n.TotalRequests || 0), 0);
+    $("sReqs").textContent = total.toLocaleString();
+    if (lastTotal !== null) {
+      rateHistory.push(rateHistory.pop() + (total - lastTotal));
+    }
+    lastTotal = total;
+    const rate = rateHistory.reduce((a,b)=>a+b,0);
+    $("sRate").innerHTML = rate + " <small>req</small>";
+    renderSpark();
+
+    const tb = $("fleet");
+    if (!nodes.length) {
+      tb.innerHTML = `<tr><td colspan="7" class="empty">no providers registered — run make run-fake</td></tr>`;
+      return;
+    }
+    tb.innerHTML = nodes.map(n => {
+      const fresh = now - Date.parse(n.LastSeen) < STALE_MS;
+      const modelsHtml = Object.keys(n.Models || {})
+        .map(m => `<span class="badge model">${esc(m)}</span>`).join("");
+      return `<tr>
+        <td><span class="dot cell ${fresh ? "up" : "stale"}"></span></td>
+        <td class="mono">${esc(n.ID)}</td>
+        <td>${esc(n.Chip || "—")}</td>
+        <td>${n.MemoryGB ? n.MemoryGB + " GB" : "—"}</td>
+        <td class="mono">${n.QueueDepth || 0}</td>
+        <td class="mono">${n.TotalRequests || 0}</td>
+        <td>${modelsHtml || "—"}</td>
+      </tr>`;
+    }).join("");
+
+    // keep the model dropdown in sync
+    const sel = $("modelSel");
+    const current = sel.value;
+    sel.innerHTML = [...models].sort().map(m => `<option>${esc(m)}</option>`).join("")
+      || `<option value="">— no models —</option>`;
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
+  } catch (e) {
+    $("coordDot").classList.remove("up");
+  }
+}
+
+function renderSpark() {
+  const max = Math.max(...rateHistory, 1);
+  $("spark").innerHTML = rateHistory
+    .map(v => `<i style="height:${Math.max(8, (v/max)*100)}%"></i>`).join("");
+}
+setInterval(() => {
+  rateHistory.copyWithin(0, 1);
+  rateHistory[rateHistory.length-1] = 0;
+}, 1500);
+
+async function loadModels() { /* handled inside poll() via debug endpoint */ }
+
+$("send").onclick = async () => {
+  const btn = $("send"), out = $("out");
+  const model = $("modelSel").value;
+  const prompt = $("prompt").value.trim();
+  if (!model || !prompt) return;
+  btn.disabled = true;
+  out.innerHTML = "";
+  const t0 = performance.now();
+  let text = "", usage = null, node = null;
+  const cursor = `<span class="cursor"></span>`;
+  try {
+    const resp = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json",
+                 "Authorization": "Bearer " + $("apiKey").value.trim() },
+      body: JSON.stringify({ model, stream: true,
+        messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!resp.ok) {
+      const j = await resp.json().catch(() => null);
+      throw new Error(j?.error?.message || ("HTTP " + resp.status));
+    }
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const events = buf.split("\n\n");
+      buf = events.pop();
+      for (const ev of events) {
+        const line = ev.split("\n").find(l => l.startsWith("data: "));
+        if (!line) continue;
+        const payload = line.slice(6);
+        if (payload === "[DONE]") continue;
+        let j; try { j = JSON.parse(payload); } catch { continue; }
+        if (j.error) throw new Error(j.error.message);
+        const d = j.choices?.[0]?.delta;
+        if (d?.content) text += d.content;
+        if (d?.provider_node) node = d.provider_node;
+        if (j.usage) usage = j.usage;
+      }
+      out.innerHTML = esc(text) + cursor;
+      out.scrollTop = out.scrollHeight;
+    }
+    const secs = ((performance.now() - t0) / 1000).toFixed(2);
+    const tps = usage?.completion_tokens ? (usage.completion_tokens / secs).toFixed(1) : null;
+    out.innerHTML = esc(text) +
+      `<div class="meta">${model} · ${secs}s · ${usage ? usage.total_tokens + " tokens" + (tps ? " · " + tps + " tok/s" : "") : ""}</div>`;
+  } catch (e) {
+    out.innerHTML = `<span class="err">${esc(e.message)}</span>` +
+      (text ? `<div style="margin-top:8px">${esc(text)}</div>` : "");
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

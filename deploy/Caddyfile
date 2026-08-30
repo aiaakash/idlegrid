@@ -1,0 +1,7 @@
+# /etc/caddy/Caddyfile — TLS termination for the idlegrid coordinator.
+# Caddy obtains and renews Let's Encrypt certificates automatically.
+# Replace api.example.com with your DNS name (A record -> server IP).
+
+api.example.com {
+	reverse_proxy localhost:8090
+}

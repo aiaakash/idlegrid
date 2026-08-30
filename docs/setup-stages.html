@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idlegrid — single Mac → two Macs → production</title>
+<style>
+  :root {
+    --bg:#0a0a0f; --panel:#12121a; --panel2:#16161f; --border:#23232f;
+    --text:#e4e4ec; --dim:#8b8b9e; --accent:#6c7bff; --accent2:#22d3ee;
+    --green:#34d399; --amber:#fbbf24; --red:#f87171;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,"SF Pro Text",Inter,sans-serif;
+    max-width:1060px;margin:0 auto;padding:40px 28px 80px}
+  h1{font-size:26px;letter-spacing:-.02em;margin-bottom:6px}
+  h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{color:var(--dim);margin-bottom:30px;max-width:760px}
+  h2{font-size:19px;margin:46px 0 6px;display:flex;align-items:center;gap:10px}
+  h2 .n{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+    border-radius:8px;background:linear-gradient(135deg,var(--accent),#7c5cff);
+    font-size:13px;color:#fff;font-family:var(--mono)}
+  .sub{color:var(--dim);font-size:13.5px;margin-bottom:16px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;margin-bottom:14px}
+  .code{background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:12px 16px;font:12.5px/1.7 var(--mono);overflow-x:auto;margin:12px 0;white-space:pre}
+  .code .c{color:var(--dim)}
+  .code .p{color:var(--accent2)}
+  code.inline{font-family:var(--mono);font-size:12.5px;background:var(--panel2);
+    border:1px solid var(--border);border-radius:6px;padding:1px 7px}
+  /* ---- diagram primitives ---- */
+  .diagram{display:flex;flex-direction:column;gap:14px;margin:18px 0 6px}
+  .machine{border:1.5px solid var(--border);border-radius:14px;padding:16px;background:var(--panel2);position:relative}
+  .machine>.tag{position:absolute;top:-11px;left:16px;background:var(--bg);
+    border:1px solid var(--border);border-radius:20px;padding:2px 12px;
+    font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+  .machine.mb{border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+  .machine.mb>.tag{color:#a5b0ff;border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+  .machine.air{border-color:color-mix(in srgb,var(--amber) 50%,transparent)}
+  .machine.air>.tag{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+  .machine.cloud{border-color:color-mix(in srgb,var(--accent2) 45%,transparent)}
+  .machine.cloud>.tag{color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 35%,transparent)}
+  .procs{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch}
+  .proc{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--border);
+    border-radius:10px;padding:10px 12px;text-align:center}
+  .proc .t{font-weight:600;font-size:13px}
+  .proc .d{color:var(--dim);font-size:11.5px;margin-top:3px;line-height:1.45}
+  .proc .port{font:10.5px var(--mono);color:var(--accent2);margin-top:5px}
+  .proc.coordinator{border-color:color-mix(in srgb,var(--accent) 55%,transparent)}
+  .proc.provider{border-color:color-mix(in srgb,var(--green) 45%,transparent)}
+  .proc.llama{border-color:color-mix(in srgb,var(--amber) 40%,transparent)}
+  .proc.gpu{background:linear-gradient(135deg,#1a1633,#12121a)}
+  .flow{display:flex;align-items:center;justify-content:center;gap:10px;
+    color:var(--dim);font-size:12px;flex-wrap:wrap}
+  .arrow{color:var(--accent);font-size:16px}
+  .arrow.up{transform:rotate(-90deg);display:inline-block}
+  .netline{border-top:2px dashed color-mix(in srgb,var(--amber) 55%,transparent);
+    margin:6px 24px;position:relative;text-align:center}
+  .netline .lbl{position:relative;top:-11px;background:var(--bg);padding:0 10px;
+    color:var(--amber);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  .netline.cloudnet{border-top-color:color-mix(in srgb,var(--accent2) 55%,transparent)}
+  .netline.cloudnet .lbl{color:var(--accent2)}
+  .conn{display:flex;justify-content:center;margin:2px 0}
+  .conn .wire{display:flex;flex-direction:column;align-items:center;color:var(--dim);font-size:11px}
+  .conn .wire b{color:var(--green);font-size:17px;font-weight:400}
+  .conn .wire b.rev{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin:10px 0}
+  th{text-align:left;color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;
+    letter-spacing:.06em;padding:7px 12px;border-bottom:1px solid var(--border)}
+  td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td:first-child{color:var(--dim);white-space:nowrap}
+  .same{color:var(--green)} .changed{color:var(--amber)}
+  .note{border-left:3px solid var(--accent);padding:10px 14px;background:var(--panel2);
+    border-radius:0 10px 10px 0;font-size:13.5px;color:var(--dim);margin:14px 0}
+  .note b{color:var(--text)}
+  .pill{display:inline-block;font:11px var(--mono);border:1px solid var(--border);
+    border-radius:20px;padding:2px 10px;color:var(--dim);margin:2px 4px 2px 0}
+  .pill.ok{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,transparent)}
+  .fleet{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px;margin:8px 0}
+  .node{border:1px solid var(--border);border-radius:8px;padding:7px 4px;text-align:center;
+    font-size:10.5px;color:var(--dim);background:var(--panel)}
+  .node b{display:block;color:var(--text);font-size:11px;margin-bottom:2px}
+  .node.mac{border-color:color-mix(in srgb,var(--green) 35%,transparent)}
+  ul.plain{margin:8px 0 0 18px;color:var(--dim);font-size:13.5px}
+  ul.plain li{margin-bottom:5px}
+  ul.plain li b{color:var(--text);font-weight:600}
+</style>
+</head>
+<body>
+
+<h1><span>idlegrid</span> — from your desk to production</h1>
+<p class="lede">Three stages, one codebase. The architecture was deliberately shaped so that
+going from one Mac → two Macs → thousands changes <b>where processes live</b>, not how they're written.
+The key property making this work: <b>providers always dial out to the coordinator</b> — the coordinator
+is the only component that ever needs a reachable address.</p>
+
+<!-- ================= STAGE 1 ================= -->
+<h2><span class="n">1</span>Now — everything on your MacBook Pro</h2>
+<p class="sub">What's running on this machine at this moment (loopback only, zero network).</p>
+
+<div class="card">
+  <div class="diagram">
+    <div class="flow">
+      <span class="pill ok">browser :8090</span><span class="arrow">→</span>
+      <span style="color:var(--dim)">dashboard + playground</span><span class="arrow">↔</span>
+      <span style="color:var(--dim)">curl / OpenAI SDK</span>
+    </div>
+    <div class="machine mb">
+      <div class="tag">MacBook Pro — M4 Pro · 24 GB · macOS 26</div>
+      <div class="procs">
+        <div class="proc coordinator">
+          <div class="t">coordinator <span style="color:var(--dim)">(Go)</span></div>
+          <div class="d">gateway · scheduler<br>registry · dashboard</div>
+          <div class="port">:8090</div>
+        </div>
+        <div class="proc provider">
+          <div class="t">idlegrid-provider<br><span style="color:var(--dim)">(Swift daemon)</span></div>
+          <div class="d">WS client · spawns &amp;<br>supervises llama-server</div>
+          <div class="port">dial-out ↓</div>
+        </div>
+        <div class="proc llama">
+          <div class="t">llama-server</div>
+          <div class="d">OpenAI-compatible<br>local API · SSE out</div>
+          <div class="port">127.0.0.1:8199</div>
+        </div>
+        <div class="proc gpu">
+          <div class="t">Metal GPU</div>
+          <div class="d">Qwen2.5-0.5B Q4<br>unified memory</div>
+          <div class="port">~470 MB</div>
+        </div>
+      </div>
+      <div class="flow" style="margin-top:12px">
+        <span style="color:var(--dim)">request path:</span>
+        <span class="pill">gateway</span><span class="arrow">→</span>
+        <span class="pill">scheduler picks node</span><span class="arrow">→</span>
+        <span class="pill">WS loopback</span><span class="arrow">→</span>
+        <span class="pill">daemon</span><span class="arrow">→</span>
+        <span class="pill">llama-server</span><span class="arrow">→</span>
+        <span class="pill ok">GPU</span><span class="arrow">→</span>
+        <span style="color:var(--dim)">streamed back the same path</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="code"><span class="c"># terminal 1</span>
+make run-coordinator
+<span class="c"># terminal 2</span>
+provider-swift/.build/idlegrid-provider <span class="p">--model</span> ~/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+<span class="c"># everything on 127.0.0.1 — no firewall, no IPs, no DNS</span></div>
+
+  <table>
+    <tr><th>Already real here</th><th></th></tr>
+    <tr><td>Scheduler logic</td><td>cost model, atomic reservation, cooldowns, stale sweeps</td></tr>
+    <tr><td>Protocol</td><td>register / heartbeat / request / chunk / complete / cancel</td></tr>
+    <tr><td>Failure handling</td><td>mid-stream disconnect → 502, cancel propagation, 120s deadline</td></tr>
+    <tr><td>OpenAI API + SSE</td><td>works with the standard SDKs, streamed token-by-token</td></tr>
+    <tr><td>Fake scale</td><td><code class="inline">make run-fake N=200</code> — 200 simulated nodes, real scheduler</td></tr>
+  </table>
+</div>
+
+<!-- ================= STAGE 2 ================= -->
+<h2><span class="n">2</span>Next — add the M1 Air (two real machines)</h2>
+<p class="sub">Same binaries, same flags — one thing changes: <b>where the daemon points</b>. Now real network physics apply.</p>
+
+<div class="card">
+  <div class="diagram">
+    <div class="machine mb">
+      <div class="tag">MacBook Pro — coordinator + (optional) provider</div>
+      <div class="procs">
+        <div class="proc coordinator"><div class="t">coordinator</div><div class="d">listens</div><div class="port">:8090 ← only public endpoint</div></div>
+        <div class="proc llama"><div class="t">llama-server</div><div class="d">local node (optional)</div><div class="port">:8199</div></div>
+      </div>
+    </div>
+    <div class="conn">
+      <div class="wire"><b>⇣</b><span>provider dials <b style="color:var(--green)">wss://mbp:8090/ws/provider</b></span>
+      <span class="rev" style="color:var(--accent)">⇡ tokens stream back</span></div>
+    </div>
+    <div class="netline"><span class="lbl">network boundary — same Wi-Fi · or Tailscale (recommended)</span></div>
+    <div class="conn">
+      <div class="wire"><span>no port forwarding, no inbound rules on the Air — it only dials out</span></div>
+    </div>
+    <div class="machine air">
+      <div class="tag">MacBook Air — M1 · 16 GB · provider only</div>
+      <div class="procs">
+        <div class="proc provider"><div class="t">idlegrid-provider</div><div class="d">same binary<br><code class="inline">--coordinator ws://&lt;MBP-IP&gt;:8090/ws/provider</code></div><div class="port">dial-out ↓</div></div>
+        <div class="proc llama"><div class="t">llama-server</div><div class="d">model ≤ ~7 GB weights<br>(0.5B–3B recommended)</div><div class="port">127.0.0.1:8199</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="code"><span class="c"># one-time on the Air</span>
+brew install llama.cpp
+<span class="c"># copy ~/React\ Apps/idlegrid over (AirDrop / git / scp), then</span>
+./provider-swift/build.sh
+
+<span class="c"># run on the Air — the ONLY difference from local is the --coordinator URL</span>
+./provider-swift/.build/idlegrid-provider <span class="p">--coordinator</span> ws://&lt;MBP-tailscale-ip&gt;:8090/ws/provider <span class="p">\</span>
+  <span class="p">--model</span> ~/models/qwen2.5-0.5b-instruct-q4_k_m.gguf <span class="p">--name</span> <span class="p">"M1-Air"</span></div>
+
+  <div class="note"><b>Why Tailscale:</b> both Macs sit behind different home NATs with ever-changing
+  IPs. Tailscale gives stable 100.x addresses + WireGuard encryption, zero router config — and
+  it happens to be exactly how real providers will connect. Install on both, done.</div>
+
+  <table>
+    <tr><th>New capability</th><th>Why it matters</th></tr>
+    <tr><td>True NAT traversal</td><td>verifies the outbound-only design under a real home network</td></tr>
+    <tr><td>Churn &amp; failure drills</td><td>close the Air's lid mid-stream → watch 502 + failover; kill the daemon → stale sweep</td></tr>
+    <tr><td>Real latency &amp; Wi-Fi</td><td>token streaming over actual network, not loopback</td></tr>
+    <tr><td>Heterogeneous fleet</td><td>scheduler sees M4 Pro + M1 Air: different RAM, models, speed — cost model gets real input</td></tr>
+  </table>
+</div>
+
+<!-- ================= STAGE 3 ================= -->
+<h2><span class="n">3</span>Production — cloud control plane, worldwide Macs</h2>
+<p class="sub">Same shape, one level up: the coordinator becomes a small cloud deployment, and the "Air" becomes ten thousand strangers' Macs.</p>
+
+<div class="card">
+  <div class="diagram">
+    <div class="machine" style="border-style:solid">
+      <div class="tag">Developers worldwide</div>
+      <div class="procs">
+        <div class="proc"><div class="t">apps using OpenAI SDK</div><div class="d">base_url = api.yourdomain.com</div></div>
+      </div>
+    </div>
+    <div class="conn"><div class="wire"><b class="rev">⇣</b><span>HTTPS + TLS · bearer keys · SSE streams back ⇡</span></div></div>
+    <div class="machine cloud">
+      <div class="tag">Cloud control plane — 2–3 small VMs, one region to start</div>
+      <div class="procs">
+        <div class="proc coordinator"><div class="t">coordinator ×2</div><div class="d">gateway + scheduler<br>behind load balancer</div><div class="port">:443 via LB + TLS</div></div>
+        <div class="proc"><div class="t">Postgres</div><div class="d">registry, model catalog,<br>billing ledger (replaces in-memory)</div></div>
+        <div class="proc"><div class="t">R2 / object store</div><div class="d">signed model weights<br>+ daemon updates</div></div>
+        <div class="proc"><div class="t">Stripe</div><div class="d">dev cards in,<br>provider payouts out</div></div>
+        <div class="proc"><div class="t">Console UI</div><div class="d">dashboard, keys,<br>earnings (Next.js)</div></div>
+        <div class="proc"><div class="t">Observability</div><div class="d">Prometheus / Grafana / logs<br>+ on-call alerts</div></div>
+      </div>
+    </div>
+    <div class="conn">
+      <div class="wire"><b>⇣</b><span>every provider dials <b style="color:var(--green)">wss://api.yourdomain.com/ws/provider</b> — unchanged protocol</span></div>
+    </div>
+    <div class="netline cloudnet"><span class="lbl">public internet — NATs, home Wi-Fi, lids closing</span></div>
+    <div class="machine">
+      <div class="tag">Provider fleet — real Macs behind home networks</div>
+      <div class="fleet">
+        <div class="node mac"><b>M2 Air</b>Tokyo</div>
+        <div class="node mac"><b>M4 Pro</b>Austin</div>
+        <div class="node mac"><b>M3 Max</b>Berlin</div>
+        <div class="node mac"><b>M1</b>Mumbai</div>
+        <div class="node mac"><b>M4</b>São Paulo</div>
+        <div class="node mac"><b>Studio</b>Seoul</div>
+        <div class="node mac"><b>M2</b>London</div>
+        <div class="node">… ×10k</div>
+      </div>
+      <div class="flow" style="margin-top:8px">
+        <span class="pill">daemon + weights auto-download (SHA-256 verified)</span>
+        <span class="pill">duty-cycle schedule</span>
+        <span class="pill">earnings accrue per token</span>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Concern</th><th>Now / two-Mac</th><th>Production</th></tr>
+    <tr><td>Coordinator runs on</td><td class="same">a process on your MBP</td><td class="changed">2–3 cloud VMs (or Fly.io/Railway), behind a load balancer</td></tr>
+    <tr><td>Registry / state</td><td class="same">in-memory (lost on restart)</td><td class="changed">Postgres — survives restarts, enables billing</td></tr>
+    <tr><td>TLS &amp; domain</td><td class="same">plain ws:// + raw IP</td><td class="changed">wss://api.yourdomain.com, certs via LB or Caddy</td></tr>
+    <tr><td>Who can be a provider</td><td class="same">you (trusted)</td><td class="changed">strangers → provider auth tokens, attestation, rate limits</td></tr>
+    <tr><td>Model distribution</td><td class="same">manual GGUF download</td><td class="changed">coordinator-pushed catalog from R2, checksummed, prefetched on demand</td></tr>
+    <tr><td>Money</td><td class="same">nothing metered</td><td class="changed">micro-USD ledger per token; Stripe in/out; payouts</td></tr>
+    <tr><td>Privacy</td><td class="same">plaintext (documented v0 shortcut)</td><td class="changed">NaCl Box per request → Secure Enclave keys, hardened runtime, MLX in-process</td></tr>
+    <tr><td>Wire protocol</td><td class="same" colspan="2">unchanged — same 9 message types, same scheduler contract</td></tr>
+    <tr><td>Provider daemon</td><td class="same" colspan="2">unchanged shape: dial out, register, heartbeat, serve — hardening is additive</td></tr>
+  </table>
+
+  <div class="note"><b>The whole point of the v0 design:</b> because providers dial out and the
+  coordinator is stateless-ish, "production" is mostly (1) point the daemon at a domain,
+  (2) add Postgres + TLS + billing around the same Go binary. No architectural rewrite —
+  the hard 20% (protocol, scheduler, failure semantics) is already proven on your desk.</div>
+</div>
+
+<!-- ================= MIGRATION ORDER ================= -->
+<h2><span class="n">4</span>Migration order — what to build, in sequence</h2>
+<div class="card">
+  <table>
+    <tr><th>#</th><th>Step</th><th>Stage</th><th>Effort</th></tr>
+    <tr><td>1</td><td>Two-Mac test over Tailscale (done = Air serves real tokens; lid-close drill passes)</td><td>2 devices</td><td>~1 hour, no code</td></tr>
+    <tr><td>2</td><td>Postgres store behind the existing registry interface + model catalog table</td><td>pre-prod</td><td>1–2 days</td></tr>
+    <tr><td>3</td><td>Deploy coordinator to one VM + domain + TLS (Caddy), Air points at it</td><td>pre-prod</td><td>half a day</td></tr>
+    <tr><td>4</td><td>Provider auth tokens + install script (curl | bash) for friendly testers</td><td>alpha</td><td>2–3 days</td></tr>
+    <tr><td>5</td><td>Token metering → micro-USD ledger → Stripe deposits + payouts</td><td>alpha</td><td>~1 week</td></tr>
+    <tr><td>6</td><td>NaCl Box request sealing + Secure Enclave keypairs (the privacy layer)</td><td>alpha</td><td>1–2 weeks</td></tr>
+    <tr><td>7</td><td>Hardened daemon (Hardened Runtime, PT_DENY_ATTACH) + signed auto-updates</td><td>beta</td><td>ongoing</td></tr>
+    <tr><td>8</td><td>In-process MLX backend replacing llama-server subprocess</td><td>beta</td><td>2–4 weeks</td></tr>
+    <tr><td>9</td><td>R2 model distribution + prefetch, regional schedulers, on-call stack</td><td>scale</td><td>ongoing</td></tr>
+  </table>
+</div>
+
+<p style="color:var(--dim);font-size:12.5px;margin-top:26px">
+Reference implementation studied: <a style="color:var(--accent)" href="https://github.com/Layr-Labs/d-inference">Layr-Labs/d-inference</a> —
+their <code style="font-family:var(--mono);font-size:11px">docs/architecture/</code> is the blueprint for stages 6–9.</p>
+
+</body>
+</html>

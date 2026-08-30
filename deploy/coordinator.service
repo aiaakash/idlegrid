@@ -1,0 +1,27 @@
+[Unit]
+Description=idlegrid coordinator (private inference network control plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=idlegrid
+Group=idlegrid
+WorkingDirectory=/opt/idlegrid
+ExecStart=/opt/idlegrid/coordinator
+EnvironmentFile=/etc/idlegrid/env
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/idlegrid
+
+# hardening
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

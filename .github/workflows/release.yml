@@ -1,0 +1,77 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  coordinator-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build coordinator (linux amd64)
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+            -ldflags "-s -w" -o dist/pkg/coordinator ./coordinator/cmd/coordinator
+      - name: Package
+        run: |
+          cp deploy/coordinator.service deploy/Caddyfile deploy/idlegrid.env deploy/DEPLOY.md dist/pkg/
+          tar -czf dist/idlegrid-coordinator-${{ github.ref_name }}-linux-amd64.tar.gz -C dist/pkg .
+          rm -rf dist/pkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinator-linux
+          path: dist/
+
+  provider-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendor mlx-swift (pinned revision + no-JIT patch)
+        run: ./scripts/bootstrap-mlx.sh
+      - name: Fetch matching mlx.metallib (from official mlx wheel)
+        run: |
+          python3 -m pip install --target /tmp/mlxpy mlx==0.29.1
+          mkdir -p provider-swift/vendor
+          cp /tmp/mlxpy/mlx/lib/mlx.metallib provider-swift/vendor/mlx.metallib
+      - name: Build provider
+        run: swift build -c release
+        working-directory: provider-swift
+      - name: Package
+        run: |
+          mkdir -p dist/idlegrid
+          cp provider-swift/.build/release/idlegrid-provider dist/idlegrid/
+          cp provider-swift/vendor/mlx.metallib dist/idlegrid/
+          printf 'idlegrid provider bundle.\nidlegrid-provider and mlx.metallib MUST stay in the same directory.\n' > dist/idlegrid/README.txt
+          cd dist && zip -qr idlegrid-provider-macos-arm64.zip idlegrid
+      - uses: actions/upload-artifact@v4
+        with:
+          name: provider-macos
+          path: dist/
+
+  publish:
+    needs: [coordinator-linux, provider-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum coordinator-linux/* provider-macos/* > sha256sums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/coordinator-linux/idlegrid-coordinator-*.tar.gz
+            dist/provider-macos/idlegrid-provider-*.zip
+            dist/sha256sums.txt
