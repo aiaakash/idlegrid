@@ -180,7 +180,7 @@ IDLEGRID_PROVIDER_CODE=<join-code>   # Mac owners must present this to join
 ### Step 4 — Mac owners join (one command)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR-USER/idlegrid/main/deploy/install.sh \
+curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh \
   | bash -s -- --server wss://api.yourdomain.com/ws/provider \
       --code <join-code>
 ```
