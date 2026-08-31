@@ -24,7 +24,7 @@
 set -euo pipefail
 
 REPO="${IDLEGRID_REPO:-aiaakash/idlegrid}"
-SERVER="" CODE="" MODEL="" NAME="" RELEASE="latest"
+SERVER="" CODE="" ENROLL_CODE="" MODEL="" NAME="" RELEASE="latest"
 INSTALL_ROOT="$HOME/.idlegrid"
 USE_LAUNCHD=1
 
@@ -151,6 +151,7 @@ source "$INSTALL_ROOT/config.env"
 exec "$BIN_DIR/idlegrid-provider" \\
   --coordinator "\$IDLEGRID_SERVER" \\
   \${IDLEGRID_CODE:+--code "\$IDLEGRID_CODE"} \\
+  \${IDLEGRID_ENROLL_CODE:+--enroll-code "\$IDLEGRID_ENROLL_CODE"} \\
   --model "\$IDLEGRID_MODEL" \\
   --name "\$IDLEGRID_NAME"
 EOF
