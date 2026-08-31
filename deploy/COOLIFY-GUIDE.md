@@ -57,12 +57,12 @@ DATABASE_URL=<paste the connection string from Step 1>
 
 ## Step 3 — Deploy the console (the web app)
 
-The console lives in a subdirectory, so it deploys with the **Docker Compose**
-build pack (the plain Dockerfile pack has a known Coolify bug with
-subdirectory paths).
+The console uses the **Docker Compose** build pack with a compose file at the
+repo root (Coolify has a bug with Dockerfile/compose files inside
+subdirectories — the helper's `mkdir -p` collides with the existing file).
 
 1. **+ New Resource** → **Git Based → Public Repository** → same repo, branch `main`
-2. Build Pack: **Docker Compose** — Compose Location: `/console/docker-compose.yml`
+2. Build Pack: **Docker Compose** — Compose Location: `/docker-compose.yml` (the file at the repo root — leave the default)
 3. **Domain**: `https://console.sqlguroo.com`
 4. **Environment Variables** — add one:
 
