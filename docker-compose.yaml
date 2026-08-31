@@ -1,6 +1,6 @@
 # Coolify deployment for the console (Docker Compose build pack).
 # In Coolify: Docker Compose resource -> Docker Compose Location:
-#   /docker-compose.yml   (root — subdirectory locations hit a Coolify bug)
+#   /docker-compose.yaml   (root — subdirectory locations hit a Coolify bug)
 services:
   console:
     build:

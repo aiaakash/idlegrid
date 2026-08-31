@@ -62,7 +62,7 @@ repo root (Coolify has a bug with Dockerfile/compose files inside
 subdirectories — the helper's `mkdir -p` collides with the existing file).
 
 1. **+ New Resource** → **Git Based → Public Repository** → same repo, branch `main`
-2. Build Pack: **Docker Compose** — Compose Location: `/docker-compose.yml` (the file at the repo root — leave the default)
+2. Build Pack: **Docker Compose** — Compose Location: `/docker-compose.yaml` (the file at the repo root — leave the default)
 3. **Domain**: `https://console.sqlguroo.com`
 4. **Environment Variables** — add one:
 
