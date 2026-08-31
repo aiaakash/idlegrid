@@ -204,14 +204,18 @@ func (g *Gateway) HandleConsoleKeys(w http.ResponseWriter, r *http.Request, u st
 	}
 }
 
-// HandleConsoleUsage: GET -> own usage rows.
+// HandleConsoleUsage: GET -> own usage rows. Admins see all traffic
+// (including admin-key playground requests, which have no user).
 func (g *Gateway) HandleConsoleUsage(w http.ResponseWriter, r *http.Request, u store.APIKeyAuth) {
 	if g.Billing == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no db"})
 		return
 	}
-	uid := u.UserID
-	rows, err := g.Billing.UsageRows(r.Context(), &uid, 100)
+	var uid *int64
+	if u.Role != "admin" {
+		uid = &u.UserID
+	}
+	rows, err := g.Billing.UsageRows(r.Context(), uid, 100)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
