@@ -116,7 +116,11 @@ const (
 )
 
 // PriceFor resolves rates for a model: DB override, else defaults.
+// A nil Billing (dev mode, no DATABASE_URL) yields the defaults.
 func PriceFor(ctx context.Context, b Billing, model string) (inRate, outRate int64, err error) {
+	if b == nil {
+		return DefaultInputMicroPer1M, DefaultOutputMicroPer1M, nil
+	}
 	in, out, err := b.GetModelPrice(ctx, model)
 	if err != nil || in <= 0 || out <= 0 {
 		return DefaultInputMicroPer1M, DefaultOutputMicroPer1M, nil

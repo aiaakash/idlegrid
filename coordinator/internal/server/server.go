@@ -52,6 +52,7 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	mux.HandleFunc("/v1/admin/users", gateway.withAuth(gateway.handleCreateUser))
 	mux.HandleFunc("/v1/admin/prices", gateway.withAuth(gateway.handleSetPrice))
 	mux.HandleFunc("/v1/pricing", gateway.handlePricing)
+	mux.HandleFunc("/v1/openrouter/models", gateway.HandleOpenRouterModels)
 	mux.HandleFunc("/v1/usage", gateway.withAuth(gateway.handleUsage))
 	mux.HandleFunc("/v1/balance", gateway.withAuth(gateway.handleBalance))
 
