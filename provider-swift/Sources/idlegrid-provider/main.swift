@@ -74,6 +74,7 @@ struct Args {
 
     SUBCOMMANDS:
       login               link this Mac to your account (device authorization flow)
+      status              show account link, install, and service state
       --dry-run           register without a loaded model; requests error
     """
 }
@@ -81,10 +82,18 @@ struct Args {
 // Unbuffered stdout so logs appear when redirected to a file.
 setvbuf(stdout, nil, _IONBF, 0)
 
-// Subcommand: `idlegrid-provider login` links this Mac to an account via the
-// device authorization flow, then exits. Everything else is the daemon.
-if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "login" {
-    exit(LoginCommand.run(args: Array(CommandLine.arguments.dropFirst(2))))
+// Subcommands run and exit; everything else is the daemon.
+if CommandLine.arguments.count > 1 {
+    switch CommandLine.arguments[1] {
+    case "login":
+        // Link this Mac to an account via the device authorization flow.
+        exit(LoginCommand.run(args: Array(CommandLine.arguments.dropFirst(2))))
+    case "status":
+        // Is this Mac linked / installed / running?
+        exit(StatusCommand.run())
+    default:
+        break
+    }
 }
 
 let args = Args.parse(CommandLine.arguments)

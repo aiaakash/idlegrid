@@ -19,7 +19,10 @@ final class ProviderClient: @unchecked Sendable {
     private var inflight: [String: Task<Void, Never>] = [:]
     private let joinCode: String
     private let enrollCode: String
-    private let authToken: String
+    // Explicit --token override. When empty, the token is re-read from the
+    // credentials file on EVERY connect, so `idlegrid-provider login` takes
+    // effect on the next reconnect without a manual restart.
+    private let authTokenOverride: String
     // Set when the coordinator permanently rejects us (e.g. bad join code):
     // stop reconnecting and exit instead.
     private var fatalRegistration = false
@@ -42,7 +45,7 @@ final class ProviderClient: @unchecked Sendable {
         self.defaultMaxTokens = defaultMaxTokens
         self.joinCode = joinCode
         self.enrollCode = enrollCode
-        self.authToken = authToken
+        self.authTokenOverride = authToken
         self.nodeID = name.lowercased().replacingOccurrences(of: " ", with: "-")
             + "-" + String(Int.random(in: 0x1000...0xffff), radix: 16)
     }
@@ -84,6 +87,7 @@ final class ProviderClient: @unchecked Sendable {
             connGroup.enter()
         }
 
+        let effectiveToken = !authTokenOverride.isEmpty ? authTokenOverride : (CredentialsStore.loadToken() ?? "")
         let reg = RegisterMessage(
             nodeID: nodeID,
             name: name,
@@ -93,7 +97,7 @@ final class ProviderClient: @unchecked Sendable {
             version: "v0.3.0-mlx",
             joinCode: joinCode.isEmpty ? nil : joinCode,
             enrollmentCode: enrollCode.isEmpty ? nil : enrollCode,
-            authToken: authToken.isEmpty ? nil : authToken
+            authToken: effectiveToken.isEmpty ? nil : effectiveToken
         )
         let regEnv = try Envelope(type: MessageType.register, payload: reg)
         try send(regEnv)

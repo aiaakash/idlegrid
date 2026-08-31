@@ -80,6 +80,26 @@ enum LoginCommand {
         return (status, try JSONDecoder().decode(T.self, from: data))
     }
 
+    /// If the provider LaunchAgent is already installed, restart it so the
+    /// running daemon picks up the new token immediately — no manual
+    /// `launchctl kickstart` step for the user.
+    private static func restartServiceIfInstalled() {
+        let plist = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/io.idlegrid.provider.plist")
+        guard FileManager.default.fileExists(atPath: plist.path) else { return }
+        let kick = Process()
+        kick.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        kick.arguments = ["kickstart", "-k", "gui/\(getuid())/io.idlegrid.provider"]
+        kick.standardOutput = FileHandle.nullDevice
+        kick.standardError = FileHandle.nullDevice
+        if (try? kick.run()) != nil {
+            kick.waitUntilExit()
+            if kick.terminationStatus == 0 {
+                print("  ✓ Provider service restarted — it is now enrolled")
+            }
+        }
+    }
+
     /// ws(s)://host/ws/provider -> http(s)://host
     static func httpBase(from coordinator: URL) -> URL {
         var c = URLComponents(url: coordinator, resolvingAgainstBaseURL: false)!
@@ -143,6 +163,7 @@ enum LoginCommand {
                 if status == 200, let token = res.providerToken {
                     try CredentialsStore.save(token: token)
                     print("  ✓ Linked. Token saved to \(CredentialsStore.file.path)")
+                    restartServiceIfInstalled()
                     print("  Start serving with: idlegrid-provider --coordinator \(coordinator.absoluteString) …")
                     return 0
                 }
