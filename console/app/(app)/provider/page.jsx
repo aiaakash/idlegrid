@@ -25,16 +25,21 @@ export default function ProviderPage() {
         <h2>Enroll a Mac to your account</h2>
         <p className="muted" style={{ marginBottom: 12 }}>
           Enrolled Macs earn <b>directly to your account</b> (90% of every
-          request they serve). On the Mac you want to enroll, install the
-          provider and run <span className="mono">idlegrid-provider login</span> —
-          it shows a short code you approve on the{" "}
-          <a href="/link">Link a Mac</a> page. No codes to copy.
+          request they serve). On the Mac you want to enroll:
         </p>
-        <details style={{ marginBottom: 4 }}>
+        <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all" }}>
+          curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash<br/>
+          ~/.idlegrid/bin/idlegrid-provider login
+        </p>
+        <p className="muted" style={{ marginTop: 8 }}>
+          <span className="mono">login</span> shows a short code — approve it
+          on the <a href="/link">Link a Mac</a> page and the Mac is enrolled.
+          No codes to copy.
+        </p>
+        <details style={{ marginTop: 12 }}>
           <summary className="muted">Legacy: manual install with enrollment code</summary>
           <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all", marginTop: 8 }}>
             curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br/>
-            &nbsp;&nbsp;--server wss://api.sqlguroo.com/ws/provider \<br/>
             &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
           </p>
           <button

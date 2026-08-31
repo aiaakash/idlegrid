@@ -111,7 +111,7 @@ enum LoginCommand {
 
     /// args: flags after the `login` subcommand. Returns the process exit code.
     static func run(args: [String]) -> Int32 {
-        var coordinator = URL(string: "ws://127.0.0.1:8090/ws/provider")!
+        var coordinator = defaultCoordinatorURL
         var i = 0
         while i < args.count {
             if args[i] == "--coordinator", i + 1 < args.count, let u = URL(string: args[i + 1]) {

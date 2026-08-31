@@ -1,8 +1,9 @@
 #!/bin/bash
 # idlegrid provider installer for macOS (Apple Silicon).
 #
-#   curl -fsSL https://raw.githubusercontent.com/<REPO>/main/deploy/install.sh | bash -s -- \
-#       --server wss://api.example.com/ws/provider --code <join-code>
+#   curl -fsSL https://raw.githubusercontent.com/<REPO>/main/deploy/install.sh | bash
+#
+# No flags needed — the coordinator URL defaults to the production network.
 #
 # What it does:
 #   1. Checks you're on Apple Silicon, macOS 14+
@@ -12,10 +13,13 @@
 #   5. Registers a LaunchAgent so it runs at login, restarts on crash,
 #      and survives terminal closes
 #
-# Flags:
-#   --server URL        coordinator WebSocket endpoint (required)
-#   --code CODE         provider join code from the coordinator owner
-#   --enroll-code CODE  bind this Mac to your console account (earnings flow to you)
+# Afterwards, link the Mac to your account (earnings flow to you):
+#   ~/.idlegrid/bin/idlegrid-provider login
+#
+# Flags (all optional):
+#   --server URL        coordinator WebSocket endpoint (default: production)
+#   --code CODE         provider join code (only if the coordinator requires one)
+#   --enroll-code CODE  legacy: bind this Mac to your console account (prefer `login`)
 #   --model ID          Hugging Face MLX model (default mlx-community/Qwen2.5-0.5B-Instruct-4bit)
 #   --name NAME         node name (default: hostname)
 #   --repo OWNER/NAME   GitHub repo holding releases (default: IDLEGRID_REPO env)
@@ -24,7 +28,8 @@
 set -euo pipefail
 
 REPO="${IDLEGRID_REPO:-aiaakash/idlegrid}"
-SERVER="" CODE="" ENROLL_CODE="" MODEL="" NAME="" RELEASE="latest"
+SERVER="${IDLEGRID_SERVER:-wss://api.sqlguroo.com/ws/provider}"
+CODE="" ENROLL_CODE="" MODEL="" NAME="" RELEASE="latest"
 INSTALL_ROOT="$HOME/.idlegrid"
 USE_LAUNCHD=1
 
@@ -172,6 +177,11 @@ PYEOF
   echo "  ✓ service started (runs at login, restarts on crash)"
   echo
   echo "Provider is running. Logs: $INSTALL_ROOT/provider.log"
+  echo
+  echo "Next: link this Mac to your account so earnings flow to you:"
+  echo "  $BIN_DIR/idlegrid-provider login"
+  echo
+  echo "Status:  $BIN_DIR/idlegrid-provider status"
   echo "Stop:    launchctl bootout gui/$(id -u)/$LABEL"
   echo "Remove:  $0 --uninstall"
 else

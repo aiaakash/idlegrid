@@ -3,6 +3,7 @@ import Darwin
 
 // idlegrid-provider: provider daemon for Apple Silicon.
 //
+//   idlegrid-provider            (uses the baked-in production coordinator)
 //   idlegrid-provider --coordinator ws://mbp:8090/ws/provider \
 //                     --model mlx-community/Qwen2.5-0.5B-Instruct-4bit
 //
@@ -12,8 +13,12 @@ import Darwin
 // The daemon connects OUT to the coordinator over WebSocket (NAT-friendly)
 // and registers only after the model is resident in memory.
 
+/// Production coordinator — baked in so install/login/start need no flags.
+/// Override with --coordinator for local dev.
+let defaultCoordinatorURL = URL(string: "wss://api.sqlguroo.com/ws/provider")!
+
 struct Args {
-    var coordinator = URL(string: "ws://127.0.0.1:8090/ws/provider")!
+    var coordinator = defaultCoordinatorURL
     var model = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
     var modelName = ""
     var maxTokens = 256
@@ -62,7 +67,7 @@ struct Args {
     static let usage = """
     USAGE: idlegrid-provider [flags]
 
-      --coordinator URL   coordinator WebSocket endpoint (default ws://127.0.0.1:8090/ws/provider)
+      --coordinator URL   coordinator WebSocket endpoint (default: production idlegrid coordinator)
       --model ID          Hugging Face model repo, MLX weights
                           (default mlx-community/Qwen2.5-0.5B-Instruct-4bit)
       --model-name NAME   model id to advertise (default: repo name)
@@ -120,6 +125,23 @@ if modelName.isEmpty { modelName = "none" }
 func c_ptrace(_ request: Int32, _ pid: Int32, _ addr: UnsafeMutableRawPointer?, _ data: Int32) -> Int32
 private let PT_DENY_ATTACH: Int32 = 31
 _ = c_ptrace(PT_DENY_ATTACH, 0, nil, 0)
+
+// Darkbloom-style rescue: on an interactive (foreground) start with no
+// account credential, offer to link the account BEFORE the slow model load.
+// Under launchd there is no terminal, so this is skipped — the daemon
+// enrolls later via `idlegrid-provider login` (picked up on reconnect).
+if args.token.isEmpty, CredentialsStore.loadToken() == nil, args.enrollCode.isEmpty,
+   isatty(STDIN_FILENO) == 1 {
+    print("[provider] this Mac is not linked to an account — earnings will sit in escrow.")
+    print("[provider] link it now? [Y/n] ", terminator: "")
+    let answer = readLine(strippingNewline: true)?
+        .trimmingCharacters(in: .whitespaces).lowercased() ?? "y"
+    if answer.isEmpty || answer == "y" || answer == "yes" {
+        if LoginCommand.run(args: ["--coordinator", args.coordinator.absoluteString]) != 0 {
+            print("[provider] continuing unlinked — run `idlegrid-provider login` anytime")
+        }
+    }
+}
 
 // Load the model in-process BEFORE registering with the coordinator.
 let backend: MLXBackend? = {
