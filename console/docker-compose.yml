@@ -1,0 +1,13 @@
+# Coolify deployment for the console (Docker Compose build pack).
+# In Coolify: Docker Compose resource -> Docker Compose Location:
+#   /console/docker-compose.yml
+services:
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - CONSOLE_API_URL=${CONSOLE_API_URL:-http://idlegrid-api:8080}
+    ports:
+      - "3000"
