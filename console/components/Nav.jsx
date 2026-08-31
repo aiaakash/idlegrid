@@ -25,7 +25,7 @@ export default function Nav({ role }) {
   }
 
   return (
-    <header className="top">
+    <aside className="sidebar">
       <h1><span>idlegrid</span></h1>
       <nav>
         {links
@@ -38,6 +38,6 @@ export default function Nav({ role }) {
       </nav>
       <div className="spacer" />
       <button className="ghost" onClick={logout}>Sign out</button>
-    </header>
+    </aside>
   );
 }

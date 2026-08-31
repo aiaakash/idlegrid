@@ -7,9 +7,9 @@ export default async function AppLayout({ children }) {
   if (!user) redirect("/login");
 
   return (
-    <div className="container">
+    <div className="shell">
       <Nav role={user.role} />
-      {children}
+      <main className="content">{children}</main>
     </div>
   );
 }
