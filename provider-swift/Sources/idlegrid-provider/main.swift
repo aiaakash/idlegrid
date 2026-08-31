@@ -20,6 +20,7 @@ struct Args {
     var name = ""
     var code = ""
     var enrollCode = ""
+    var token = ""
     var dryRun = false
 
     static func parse(_ argv: [String]) -> Args? {
@@ -45,6 +46,7 @@ struct Args {
             case "--name": guard let v = next(argv[i]) else { return nil }; args.name = v
             case "--code": guard let v = next(argv[i]) else { return nil }; args.code = v
             case "--enroll-code": guard let v = next(argv[i]) else { return nil }; args.enrollCode = v
+            case "--token": guard let v = next(argv[i]) else { return nil }; args.token = v
             case "--dry-run": args.dryRun = true
             case "--help", "-h":
                 print(usage); return nil
@@ -67,13 +69,23 @@ struct Args {
       --max-tokens N      default generation cap when a request omits max_tokens (default 256)
       --name NAME         node name (default: local hostname)
       --code CODE         provider join code (must match coordinator's IDLEGRID_PROVIDER_CODE)
-      --enroll-code CODE  bind this Mac to your account (from the console Provider page)
+      --token TOKEN       provider auth token (default: token saved by `idlegrid-provider login`)
+      --enroll-code CODE  legacy: bind this Mac to your account (prefer `login`)
+
+    SUBCOMMANDS:
+      login               link this Mac to your account (device authorization flow)
       --dry-run           register without a loaded model; requests error
     """
 }
 
 // Unbuffered stdout so logs appear when redirected to a file.
 setvbuf(stdout, nil, _IONBF, 0)
+
+// Subcommand: `idlegrid-provider login` links this Mac to an account via the
+// device authorization flow, then exits. Everything else is the daemon.
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "login" {
+    exit(LoginCommand.run(args: Array(CommandLine.arguments.dropFirst(2))))
+}
 
 let args = Args.parse(CommandLine.arguments)
 guard let args else { exit(2) }
@@ -146,7 +158,8 @@ let client = ProviderClient(
     session: session,
     defaultMaxTokens: args.maxTokens,
     joinCode: args.code,
-    enrollCode: args.enrollCode
+    enrollCode: args.enrollCode,
+    authToken: !args.token.isEmpty ? args.token : (CredentialsStore.loadToken() ?? "")
 )
 
 print("[provider] starting; coordinator=\(args.coordinator.absoluteString) dryRun=\(args.dryRun ? "yes" : "no") backend=\(backend != nil ? "in-process MLX" : "none")")

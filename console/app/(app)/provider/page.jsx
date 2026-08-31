@@ -25,21 +25,26 @@ export default function ProviderPage() {
         <h2>Enroll a Mac to your account</h2>
         <p className="muted" style={{ marginBottom: 12 }}>
           Enrolled Macs earn <b>directly to your account</b> (90% of every
-          request they serve). On the Mac you want to enroll, run the provider
-          installer with your enrollment code:
+          request they serve). On the Mac you want to enroll, install the
+          provider and run <span className="mono">idlegrid-provider login</span> —
+          it shows a short code you approve on the{" "}
+          <a href="/link">Link a Mac</a> page. No codes to copy.
         </p>
-        <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all" }}>
-          curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br/>
-          &nbsp;&nbsp;--server wss://api.sqlguroo.com/ws/provider \<br/>
-          &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
-        </p>
-        <button
-          className="ghost"
-          style={{ marginTop: 10 }}
-          onClick={() => navigator.clipboard.writeText(`--enroll-code ${code}`)}
-        >
-          Copy enroll code
-        </button>
+        <details style={{ marginBottom: 4 }}>
+          <summary className="muted">Legacy: manual install with enrollment code</summary>
+          <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all", marginTop: 8 }}>
+            curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br/>
+            &nbsp;&nbsp;--server wss://api.sqlguroo.com/ws/provider \<br/>
+            &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
+          </p>
+          <button
+            className="ghost"
+            style={{ marginTop: 10 }}
+            onClick={() => navigator.clipboard.writeText(`--enroll-code ${code}`)}
+          >
+            Copy enroll code
+          </button>
+        </details>
         {code && instructions && <p className="muted" style={{ marginTop: 10 }}>{instructions}</p>}
       </div>
 

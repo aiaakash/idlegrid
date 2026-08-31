@@ -41,6 +41,24 @@ type ConsoleStore interface {
 	// DodoCredit records a completed Dodo payment and credits the user's
 	// developer balance. Idempotent on dodoPaymentID.
 	DodoCredit(ctx context.Context, dodoPaymentID string, userID int64, amountMicro int64, raw []byte) error
+
+	// --- Phase 5: device authorization (RFC 8628-style provider login) ---
+
+	// CreateDeviceCode stores a new login attempt. deviceCodeHash is the
+	// hashed CLI polling secret; userCode is the canonical short code the
+	// user types in the console.
+	CreateDeviceCode(ctx context.Context, deviceCodeHash, userCode string, expiresAt time.Time) error
+	// ApproveDeviceCode binds the login attempt to the approving user.
+	// ok=false when the code is unknown, expired, or already approved.
+	ApproveDeviceCode(ctx context.Context, userCode string, userID int64) (ok bool, err error)
+	// RedeemDeviceCode is the CLI's poll. status is "pending" (not yet
+	// approved), "expired", "invalid" (unknown or already consumed), or "ok"
+	// (approved — providerTokenHash was issued and the attempt consumed).
+	RedeemDeviceCode(ctx context.Context, deviceCodeHash, providerTokenHash string) (userID int64, status string, err error)
+	// ResolveProviderToken maps a provider token hash to its owner.
+	ResolveProviderToken(ctx context.Context, tokenHash string) (userID int64, email string, ok bool, err error)
+	// BindNode binds a provider node to a user account (idempotent).
+	BindNode(ctx context.Context, userID int64, nodeID string) error
 }
 
 // KeyRow is a listed API key (never the plaintext).

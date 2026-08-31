@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -432,15 +433,19 @@ func (p *PostgresBilling) EnrollNode(ctx context.Context, code, nodeID string) (
 	if err != nil {
 		return 0, false, nil // unknown code
 	}
-	_, err = p.pool.Exec(ctx, `
+	if err := p.BindNode(ctx, userID, nodeID); err != nil {
+		return 0, false, err
+	}
+	return userID, true, nil
+}
+
+func (p *PostgresBilling) BindNode(ctx context.Context, userID int64, nodeID string) error {
+	_, err := p.pool.Exec(ctx, `
 		INSERT INTO provider_nodes (node_id, user_id, enrolled_at, last_seen)
 		VALUES ($1, $2, now(), now())
 		ON CONFLICT (node_id) DO UPDATE SET user_id=EXCLUDED.user_id, enrolled_at=now(), last_seen=now()`,
 		nodeID, userID)
-	if err != nil {
-		return 0, false, err
-	}
-	return userID, true, nil
+	return err
 }
 
 func (p *PostgresBilling) NodeOwner(ctx context.Context, nodeID string) (*int64, error) {
@@ -451,6 +456,81 @@ func (p *PostgresBilling) NodeOwner(ctx context.Context, nodeID string) (*int64,
 		return nil, nil // no row = unassigned
 	}
 	return owner, nil
+}
+
+// ---- Phase 5: device authorization ----
+
+func (p *PostgresBilling) CreateDeviceCode(ctx context.Context, deviceCodeHash, userCode string, expiresAt time.Time) error {
+	_, err := p.pool.Exec(ctx,
+		`INSERT INTO device_codes (device_code_hash, user_code, expires_at) VALUES ($1, $2, $3)`,
+		deviceCodeHash, userCode, expiresAt)
+	return err
+}
+
+func (p *PostgresBilling) ApproveDeviceCode(ctx context.Context, userCode string, userID int64) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE device_codes SET user_id=$2, approved_at=now()
+		WHERE user_code=$1 AND approved_at IS NULL AND expires_at > now()`,
+		userCode, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (p *PostgresBilling) RedeemDeviceCode(ctx context.Context, deviceCodeHash, providerTokenHash string) (int64, string, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var userID *int64
+	var expiresAt time.Time
+	var consumedAt *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT user_id, expires_at, consumed_at FROM device_codes
+		WHERE device_code_hash=$1 FOR UPDATE`, deviceCodeHash).
+		Scan(&userID, &expiresAt, &consumedAt)
+	if err != nil {
+		return 0, "invalid", nil // unknown device code
+	}
+	if consumedAt != nil {
+		return 0, "invalid", nil // token already issued — client must store it
+	}
+	if time.Now().After(expiresAt) {
+		return 0, "expired", nil
+	}
+	if userID == nil {
+		return 0, "pending", nil
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE device_codes SET consumed_at=now() WHERE device_code_hash=$1`,
+		deviceCodeHash); err != nil {
+		return 0, "", err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO provider_tokens (token_hash, user_id, label) VALUES ($1, $2, 'device login')`,
+		providerTokenHash, *userID); err != nil {
+		return 0, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, "", err
+	}
+	return *userID, "ok", nil
+}
+
+func (p *PostgresBilling) ResolveProviderToken(ctx context.Context, tokenHash string) (int64, string, bool, error) {
+	var userID int64
+	var email string
+	err := p.pool.QueryRow(ctx, `
+		SELECT pt.user_id, u.email FROM provider_tokens pt
+		JOIN users u ON u.id = pt.user_id
+		WHERE pt.token_hash=$1 AND NOT pt.revoked`, tokenHash).Scan(&userID, &email)
+	if err != nil {
+		return 0, "", false, nil // unknown or revoked token
+	}
+	return userID, email, true, nil
 }
 
 // DodoCredit records a completed deposit and credits the developer balance.

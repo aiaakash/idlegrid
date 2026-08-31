@@ -9,6 +9,7 @@ const links = [
   ["/keys", "API Keys"],
   ["/usage", "Usage"],
   ["/provider", "Provider"],
+  ["/link", "Link a Mac"],
   ["/payouts", "Payouts"],
   ["/admin", "Admin"],
 ];

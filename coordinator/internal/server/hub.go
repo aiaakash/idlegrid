@@ -90,21 +90,37 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 	nodeID := reg.NodeID
 
 	h.Reg.Register(nodeID, reg.Name, reg.Chip, reg.Version, reg.MemoryGB, reg.Models, reg.PublicKey, reg.SigningKey)
-	// Phase 4: bind the node to a user account when an enrollment code is
-	// presented (earnings then flow to that account instead of escrow).
-	if h.Billing != nil && reg.EnrollmentCode != "" {
+	// Bind the node to a user account so earnings flow there instead of
+	// escrow. Preferred path: auth_token issued by the device login flow.
+	// Legacy fallback: the static per-user enrollment code.
+	enrolledTo := ""
+	if h.Billing != nil {
 		if cs, ok := h.Billing.(store.ConsoleStore); ok {
-			if owner, enrolled, err := cs.EnrollNode(r.Context(), reg.EnrollmentCode, nodeID); err == nil && enrolled {
-				log.Printf("[hub] node %s enrolled to user %d", nodeID, owner)
-			} else if err != nil {
-				log.Printf("[hub] enrollment failed for %s: %v", nodeID, err)
+			switch {
+			case reg.AuthToken != "":
+				if owner, email, valid, err := cs.ResolveProviderToken(r.Context(), store.HashKey(reg.AuthToken)); err == nil && valid {
+					if err := cs.BindNode(r.Context(), owner, nodeID); err == nil {
+						enrolledTo = email
+						log.Printf("[hub] node %s enrolled to user %d (provider token)", nodeID, owner)
+					} else {
+						log.Printf("[hub] token enrollment failed for %s: %v", nodeID, err)
+					}
+				} else {
+					log.Printf("[hub] node %s presented unknown/revoked provider token", nodeID)
+				}
+			case reg.EnrollmentCode != "":
+				if owner, enrolled, err := cs.EnrollNode(r.Context(), reg.EnrollmentCode, nodeID); err == nil && enrolled {
+					log.Printf("[hub] node %s enrolled to user %d (enrollment code)", nodeID, owner)
+				} else if err != nil {
+					log.Printf("[hub] enrollment failed for %s: %v", nodeID, err)
+				}
 			}
 		}
 	}
 	log.Printf("[hub] provider registered: id=%s name=%q chip=%s mem=%dGB models=%v",
 		nodeID, reg.Name, reg.Chip, reg.MemoryGB, reg.Models)
 
-	ok, _ := protocol.New(protocol.TypeRegisterOK, protocol.RegisterOK{HeartbeatIntervalSecs: 5})
+	ok, _ := protocol.New(protocol.TypeRegisterOK, protocol.RegisterOK{HeartbeatIntervalSecs: 5, EnrolledTo: enrolledTo})
 	_ = conn.WriteJSON(ok)
 
 	out := make(chan envelope, 256)

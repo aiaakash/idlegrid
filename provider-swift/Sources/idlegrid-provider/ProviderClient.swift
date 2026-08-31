@@ -19,6 +19,7 @@ final class ProviderClient: @unchecked Sendable {
     private var inflight: [String: Task<Void, Never>] = [:]
     private let joinCode: String
     private let enrollCode: String
+    private let authToken: String
     // Set when the coordinator permanently rejects us (e.g. bad join code):
     // stop reconnecting and exit instead.
     private var fatalRegistration = false
@@ -32,7 +33,7 @@ final class ProviderClient: @unchecked Sendable {
     private var heartbeatTimer: DispatchSourceTimer?
 
     init(coordinatorURL: URL, name: String, backend: MLXBackend?,
-         dryRun: Bool, session: URLSession, defaultMaxTokens: Int, joinCode: String, enrollCode: String) {
+         dryRun: Bool, session: URLSession, defaultMaxTokens: Int, joinCode: String, enrollCode: String, authToken: String = "") {
         self.coordinatorURL = coordinatorURL
         self.name = name
         self.backend = backend
@@ -41,6 +42,7 @@ final class ProviderClient: @unchecked Sendable {
         self.defaultMaxTokens = defaultMaxTokens
         self.joinCode = joinCode
         self.enrollCode = enrollCode
+        self.authToken = authToken
         self.nodeID = name.lowercased().replacingOccurrences(of: " ", with: "-")
             + "-" + String(Int.random(in: 0x1000...0xffff), radix: 16)
     }
@@ -90,7 +92,8 @@ final class ProviderClient: @unchecked Sendable {
             models: [backend?.modelName ?? modelNameFallback],
             version: "v0.3.0-mlx",
             joinCode: joinCode.isEmpty ? nil : joinCode,
-            enrollmentCode: enrollCode.isEmpty ? nil : enrollCode
+            enrollmentCode: enrollCode.isEmpty ? nil : enrollCode,
+            authToken: authToken.isEmpty ? nil : authToken
         )
         let regEnv = try Envelope(type: MessageType.register, payload: reg)
         try send(regEnv)
@@ -106,8 +109,13 @@ final class ProviderClient: @unchecked Sendable {
             teardownConnection()
             throw ProviderError.registerDenied
         }
-        _ = try first.decode(RegisterOKMessage.self)
+        let registerOK = try first.decode(RegisterOKMessage.self)
         print("[provider] registered as \(nodeID) (\(reg.chip), \(reg.memoryGB)GB, model=\(backend?.modelName ?? modelNameFallback))")
+        if let enrolledTo = registerOK.enrolledTo, !enrolledTo.isEmpty {
+            print("[provider] ✓ enrolled to \(enrolledTo) — earnings flow to that account")
+        } else {
+            print("[provider] not enrolled — earnings escrow until you run: idlegrid-provider login")
+        }
         startHeartbeat()
     }
 

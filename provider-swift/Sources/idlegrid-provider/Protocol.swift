@@ -54,6 +54,7 @@ struct RegisterMessage: Codable {
     var version: String
     var joinCode: String?
     var enrollmentCode: String?
+    var authToken: String?
     var publicKey: String?
     var signingKey: String?
 
@@ -64,6 +65,7 @@ struct RegisterMessage: Codable {
         case models, version
         case joinCode = "join_code"
         case enrollmentCode = "enrollment_code"
+        case authToken = "auth_token"
         case publicKey = "public_key"
         case signingKey = "signing_key"
     }
@@ -78,8 +80,10 @@ struct RegisterDeniedMessage: Codable {
 
 struct RegisterOKMessage: Codable {
     var heartbeatIntervalSecs: Int
+    var enrolledTo: String?
     private enum CodingKeys: String, CodingKey {
         case heartbeatIntervalSecs = "heartbeat_interval_secs"
+        case enrolledTo = "enrolled_to"
     }
 }
 

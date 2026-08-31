@@ -66,7 +66,8 @@ type Register struct {
 	Models         []string `json:"models"` // models resident and servable right now
 	Version        string   `json:"version"`
 	JoinCode       string   `json:"join_code,omitempty"`       // required when coordinator sets one
-	EnrollmentCode string   `json:"enrollment_code,omitempty"` // binds node to an account
+	EnrollmentCode string   `json:"enrollment_code,omitempty"` // binds node to an account (legacy; prefer AuthToken)
+	AuthToken      string   `json:"auth_token,omitempty"`      // provider token from `idlegrid-provider login` (device flow)
 	PublicKey      string   `json:"public_key,omitempty"`      // X25519 (base64) — enables E2E
 	SigningKey     string   `json:"signing_key,omitempty"`     // Ed25519 public (base64) — usage signatures
 }
@@ -79,7 +80,8 @@ type RegisterDenied struct {
 
 // RegisterOK acknowledges registration and sets the heartbeat cadence.
 type RegisterOK struct {
-	HeartbeatIntervalSecs int `json:"heartbeat_interval_secs"`
+	HeartbeatIntervalSecs int    `json:"heartbeat_interval_secs"`
+	EnrolledTo            string `json:"enrolled_to,omitempty"` // account email when the node is bound
 }
 
 // Heartbeat keeps a node marked online and reports live capacity.
