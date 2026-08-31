@@ -15,6 +15,7 @@
 # Flags:
 #   --server URL        coordinator WebSocket endpoint (required)
 #   --code CODE         provider join code from the coordinator owner
+#   --enroll-code CODE  bind this Mac to your console account (earnings flow to you)
 #   --model ID          Hugging Face MLX model (default mlx-community/Qwen2.5-0.5B-Instruct-4bit)
 #   --name NAME         node name (default: hostname)
 #   --repo OWNER/NAME   GitHub repo holding releases (default: IDLEGRID_REPO env)
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --server) SERVER="$2"; shift 2 ;;
     --code) CODE="$2"; shift 2 ;;
+    --enroll-code) ENROLL_CODE="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --name) NAME="$2"; shift 2 ;;
     --repo) REPO="$2"; shift 2 ;;
@@ -110,6 +112,7 @@ step "writing $INSTALL_ROOT/config.env..."
 cat > "$INSTALL_ROOT/config.env" <<EOF
 IDLEGRID_SERVER='$SERVER'
 IDLEGRID_CODE='$CODE'
+IDLEGRID_ENROLL_CODE='$ENROLL_CODE'
 IDLEGRID_MODEL='${MODEL:-mlx-community/Qwen2.5-0.5B-Instruct-4bit}'
 IDLEGRID_NAME='${NAME:-$(hostname -s)}'
 EOF
