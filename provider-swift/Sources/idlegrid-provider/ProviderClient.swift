@@ -46,8 +46,24 @@ final class ProviderClient: @unchecked Sendable {
         self.joinCode = joinCode
         self.enrollCode = enrollCode
         self.authTokenOverride = authToken
-        self.nodeID = name.lowercased().replacingOccurrences(of: " ", with: "-")
+        self.nodeID = ProviderClient.stableNodeID(name: name)
+    }
+
+    /// Node identity is persisted so restarts re-register as the SAME node —
+    /// enrollment, earnings, and the console fleet view all key on this.
+    /// (Previously a random suffix per process made every restart a new node.)
+    private static func stableNodeID(name: String) -> String {
+        let file = CredentialsStore.dir.appendingPathComponent("node-id")
+        if let existing = try? String(contentsOf: file, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines), !existing.isEmpty {
+            return existing
+        }
+        let id = name.lowercased().replacingOccurrences(of: " ", with: "-")
             + "-" + String(Int.random(in: 0x1000...0xffff), radix: 16)
+        try? FileManager.default.createDirectory(at: CredentialsStore.dir,
+                                                 withIntermediateDirectories: true)
+        try? id.write(to: file, atomically: true, encoding: .utf8)
+        return id
     }
 
     /// Runs forever: connect, serve, reconnect with backoff.

@@ -70,6 +70,8 @@ func NewHandler(reg *registry.Registry, cfg Config) http.Handler {
 	mux.HandleFunc("/v1/console/admin/prices", gateway.requireAdminSession(gateway.HandleConsoleAdminPrices))
 	mux.HandleFunc("/v1/console/admin/payouts", gateway.requireAdminSession(gateway.HandleConsoleAdminPayouts))
 	mux.HandleFunc("/v1/console/enrollment", gateway.requireSession(gateway.HandleConsoleEnrollment))
+	mux.HandleFunc("/v1/console/nodes", gateway.requireSession(gateway.HandleConsoleNodes))
+	mux.HandleFunc("/v1/console/nodes/revoke", gateway.requireSession(gateway.HandleConsoleNodeRevoke))
 	mux.HandleFunc("/v1/console/device/approve", gateway.requireSession(gateway.HandleConsoleDeviceApprove))
 	mux.HandleFunc("/v1/device/code", gateway.HandleDeviceCode)
 	mux.HandleFunc("/v1/device/token", gateway.HandleDeviceToken)

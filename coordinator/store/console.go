@@ -57,8 +57,31 @@ type ConsoleStore interface {
 	RedeemDeviceCode(ctx context.Context, deviceCodeHash, providerTokenHash string) (userID int64, status string, err error)
 	// ResolveProviderToken maps a provider token hash to its owner.
 	ResolveProviderToken(ctx context.Context, tokenHash string) (userID int64, email string, ok bool, err error)
-	// BindNode binds a provider node to a user account (idempotent).
-	BindNode(ctx context.Context, userID int64, nodeID string) error
+	// BindNode binds a provider node to a user account (idempotent). tokenHash
+	// records the credential used (empty for legacy enrollment codes) so
+	// RevokeNode can kill it. Also sweeps any escrowed earnings the node
+	// accrued while unenrolled into the owner's account.
+	BindNode(ctx context.Context, userID int64, nodeID, tokenHash string) error
+
+	// --- Phase 6: node ownership hygiene ---
+
+	// ListProviderNodes returns the user's enrolled nodes with health info.
+	ListProviderNodes(ctx context.Context, userID int64) ([]ProviderNodeRow, error)
+	// RevokeNode unbinds a node the user owns AND revokes the provider token
+	// that bound it (otherwise the Mac would silently rebind on reconnect).
+	// ok=false when the node isn't bound to this user.
+	RevokeNode(ctx context.Context, userID int64, nodeID string) (ok bool, err error)
+	// TouchNode refreshes last_seen at heartbeat time (cheap health signal).
+	TouchNode(ctx context.Context, nodeID string) error
+}
+
+// ProviderNodeRow is one enrolled Mac in the console's fleet view.
+type ProviderNodeRow struct {
+	NodeID      string     `json:"node_id"`
+	EnrolledAt  *time.Time `json:"enrolled_at"`
+	LastSeen    *time.Time `json:"last_seen"`
+	ErrorCount  int        `json:"error_count"`
+	TokenBacked bool       `json:"token_backed"` // bound via login token (revocable)
 }
 
 // KeyRow is a listed API key (never the plaintext).

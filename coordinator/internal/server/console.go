@@ -93,6 +93,11 @@ func (g *Gateway) requireAdminSession(next func(w http.ResponseWriter, r *http.R
 	}
 }
 
+// Login attempts are brute-forceable credentials — throttle hard. Keyed per
+// email (console calls arrive via the Next.js proxy, so RemoteAddr is the
+// proxy and only the email key really discriminates).
+var loginLimiter = newRateLimiter(0.2, 5) // ~1 try per 5s, burst 5
+
 // HandleConsoleLogin: POST {email, password} -> {token, user}
 func (g *Gateway) HandleConsoleLogin(w http.ResponseWriter, r *http.Request) {
 	cs, ok := g.consoleStore(w, r)
@@ -105,6 +110,10 @@ func (g *Gateway) HandleConsoleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Email == "" || body.Password == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
+		return
+	}
+	if !loginLimiter.Allow("email:"+strings.ToLower(body.Email)) || !loginLimiter.Allow("ip:"+r.RemoteAddr) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts — wait a minute and retry"})
 		return
 	}
 	id, role, hash, err := cs.GetUserByEmail(r.Context(), body.Email)
@@ -439,6 +448,47 @@ func (g *Gateway) HandleConsoleEnrollment(w http.ResponseWriter, r *http.Request
 		"enrollment_code": code,
 		"instructions":    "On the Mac you want to enroll, install the provider and add: --enroll-code " + code,
 	})
+}
+
+// HandleConsoleNodes: GET -> the user's enrolled Macs with health (last_seen,
+// error_count). Drives the "Your enrolled Macs" card on the Provider page.
+func (g *Gateway) HandleConsoleNodes(w http.ResponseWriter, r *http.Request, u store.APIKeyAuth) {
+	cs, ok := g.consoleStore(w, r)
+	if !ok {
+		return
+	}
+	rows, err := cs.ListProviderNodes(r.Context(), u.UserID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": rows})
+}
+
+// HandleConsoleNodeRevoke: POST {node_id} — unbinds the Mac AND revokes the
+// login token that bound it, so it cannot silently re-enroll on reconnect.
+func (g *Gateway) HandleConsoleNodeRevoke(w http.ResponseWriter, r *http.Request, u store.APIKeyAuth) {
+	cs, ok := g.consoleStore(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		NodeID string `json:"node_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.NodeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "node_id required"})
+		return
+	}
+	removed, err := cs.RevokeNode(r.Context(), u.UserID, body.NodeID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !removed {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "node not enrolled to your account"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "node_id": body.NodeID})
 }
 
 // StartCanaryLoop periodically sends a known prompt through the normal

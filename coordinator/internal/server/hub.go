@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"log"
@@ -99,7 +100,7 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case reg.AuthToken != "":
 				if owner, email, valid, err := cs.ResolveProviderToken(r.Context(), store.HashKey(reg.AuthToken)); err == nil && valid {
-					if err := cs.BindNode(r.Context(), owner, nodeID); err == nil {
+					if err := cs.BindNode(r.Context(), owner, nodeID, store.HashKey(reg.AuthToken)); err == nil {
 						enrolledTo = email
 						log.Printf("[hub] node %s enrolled to user %d (provider token)", nodeID, owner)
 					} else {
@@ -167,6 +168,11 @@ func (h *Hub) readLoop(conn *websocket.Conn, nodeID string) {
 			var hb protocol.Heartbeat
 			if err := env.Decode(&hb); err == nil {
 				h.Reg.Heartbeat(nodeID, hb.FreeMemoryGB, hb.QueueDepth)
+				// Fleet health: refresh last_seen so the console can show
+				// whether an enrolled Mac is actually alive.
+				if cs, ok := h.Billing.(store.ConsoleStore); ok {
+					_ = cs.TouchNode(context.Background(), nodeID)
+				}
 			}
 		case protocol.TypeInferenceAccepted, protocol.TypeInferenceChunk:
 			var req protocol.InferenceAccepted // same shape: {request_id}

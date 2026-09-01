@@ -433,18 +433,129 @@ func (p *PostgresBilling) EnrollNode(ctx context.Context, code, nodeID string) (
 	if err != nil {
 		return 0, false, nil // unknown code
 	}
-	if err := p.BindNode(ctx, userID, nodeID); err != nil {
+	if err := p.BindNode(ctx, userID, nodeID, ""); err != nil {
 		return 0, false, err
 	}
 	return userID, true, nil
 }
 
-func (p *PostgresBilling) BindNode(ctx context.Context, userID int64, nodeID string) error {
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO provider_nodes (node_id, user_id, enrolled_at, last_seen)
-		VALUES ($1, $2, now(), now())
-		ON CONFLICT (node_id) DO UPDATE SET user_id=EXCLUDED.user_id, enrolled_at=now(), last_seen=now()`,
-		nodeID, userID)
+// BindNode binds a node to an account and, in the same transaction, sweeps
+// any earnings the node accrued into platform escrow while unenrolled.
+func (p *PostgresBilling) BindNode(ctx context.Context, userID int64, nodeID, tokenHash string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO provider_nodes (node_id, user_id, enrolled_at, last_seen, bound_with_token)
+		VALUES ($1, $2, now(), now(), NULLIF($3, ''))
+		ON CONFLICT (node_id) DO UPDATE SET
+			user_id=EXCLUDED.user_id, enrolled_at=now(), last_seen=now(),
+			bound_with_token=EXCLUDED.bound_with_token`,
+		nodeID, userID, tokenHash); err != nil {
+		return err
+	}
+
+	// Sweep: escrowed provider credits for this node's untransferred events.
+	var escrowed int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(le.amount_micro), 0)
+		FROM usage_events ue
+		JOIN ledger_entries le ON le.ref_type='request' AND le.ref_id=ue.request_id
+			AND le.entry_type='provider_earning'
+		JOIN accounts a ON a.id=le.account_id AND a.kind='provider_earnings'
+		JOIN users pu ON pu.id=a.user_id AND pu.email='platform@idlegrid.system'
+		WHERE ue.node_id=$1 AND NOT ue.transferred`, nodeID).Scan(&escrowed); err != nil {
+		return err
+	}
+	if escrowed > 0 {
+		escrowAcct, err := p.ensureAccountTx(ctx, tx, nil, "provider_earnings")
+		if err != nil {
+			return err
+		}
+		ownerAcct, err := p.ensureAccountTx(ctx, tx, &userID, "provider_earnings")
+		if err != nil {
+			return err
+		}
+		// Double-entry: out of escrow, into the owner. ON CONFLICT guards a
+		// retried bind from double-moving the money.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
+			VALUES ($1, 'enrollment_sweep', $2, 'node', $3) ON CONFLICT DO NOTHING`,
+			escrowAcct, -escrowed, nodeID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ledger_entries (account_id, entry_type, amount_micro, ref_type, ref_id)
+			VALUES ($1, 'enrollment_sweep', $2, 'node', $3) ON CONFLICT DO NOTHING`,
+			ownerAcct, escrowed, nodeID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE usage_events ue SET transferred=true
+			FROM ledger_entries le, accounts a, users pu
+			WHERE le.ref_type='request' AND le.ref_id=ue.request_id
+				AND le.entry_type='provider_earning' AND le.account_id=a.id
+				AND a.user_id=pu.id AND pu.email='platform@idlegrid.system'
+				AND a.kind='provider_earnings'
+				AND ue.node_id=$1 AND NOT ue.transferred`, nodeID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (p *PostgresBilling) ListProviderNodes(ctx context.Context, userID int64) ([]ProviderNodeRow, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT node_id, enrolled_at, last_seen, error_count,
+			(bound_with_token IS NOT NULL AND bound_with_token <> '') AS token_backed
+		FROM provider_nodes WHERE user_id=$1 ORDER BY enrolled_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ProviderNodeRow{}
+	for rows.Next() {
+		var r ProviderNodeRow
+		if err := rows.Scan(&r.NodeID, &r.EnrolledAt, &r.LastSeen, &r.ErrorCount, &r.TokenBacked); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (p *PostgresBilling) RevokeNode(ctx context.Context, userID int64, nodeID string) (bool, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var tokenHash *string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM provider_nodes WHERE node_id=$1 AND user_id=$2
+		RETURNING bound_with_token`, nodeID, userID).Scan(&tokenHash)
+	if err != nil {
+		return false, nil // not bound to this user
+	}
+	if tokenHash != nil && *tokenHash != "" {
+		if _, err := tx.Exec(ctx,
+			`UPDATE provider_tokens SET revoked=true WHERE token_hash=$1`, *tokenHash); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (p *PostgresBilling) TouchNode(ctx context.Context, nodeID string) error {
+	_, err := p.pool.Exec(ctx,
+		`UPDATE provider_nodes SET last_seen=now() WHERE node_id=$1`, nodeID)
 	return err
 }
 

@@ -4,11 +4,25 @@ import { useEffect, useState } from "react";
 
 const fmtUSD = (micro) => `$${(micro / 1_000_000).toFixed(4)}`;
 
+const ago = (ts) => {
+  if (!ts) return "never";
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
 export default function ProviderPage() {
   const [code, setCode] = useState(null);
   const [instructions, setInstructions] = useState("");
   const [me, setMe] = useState(null);
   const [payouts, setPayouts] = useState([]);
+  const [nodes, setNodes] = useState([]);
+
+  const loadNodes = () =>
+    fetch("/api/console/nodes").then((r) => r.json()).then((j) => setNodes(j.nodes || [])).catch(() => {});
 
   useEffect(() => {
     fetch("/api/console/enrollment").then((r) => r.json()).then((j) => {
@@ -17,7 +31,20 @@ export default function ProviderPage() {
     }).catch(() => {});
     fetch("/api/console/me").then((r) => r.json()).then(setMe).catch(() => {});
     fetch("/api/console/payouts").then((r) => r.json()).then((j) => setPayouts(j.payouts || [])).catch(() => {});
+    loadNodes();
+    const t = setInterval(loadNodes, 10000); // health is live-ish
+    return () => clearInterval(t);
   }, []);
+
+  async function revokeNode(nodeID) {
+    if (!confirm(`Remove ${nodeID}? Its login token is revoked — it stops earning until re-linked.`)) return;
+    const res = await fetch("/api/console/nodes/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ node_id: nodeID }),
+    });
+    if (res.ok) loadNodes();
+  }
 
   return (
     <>
@@ -63,6 +90,37 @@ export default function ProviderPage() {
           </p>
         </div>
       )}
+
+      <div className="card">
+        <h2>Your enrolled Macs</h2>
+        {nodes.length === 0 ? (
+          <p className="muted">no Macs enrolled yet — run the install + login above</p>
+        ) : (
+          <table>
+            <thead><tr><th>Node</th><th>Status</th><th>Last seen</th><th>Errors</th><th></th></tr></thead>
+            <tbody>
+              {nodes.map((n) => {
+                const online = n.last_seen && (Date.now() - new Date(n.last_seen).getTime()) < 15_000;
+                return (
+                  <tr key={n.node_id}>
+                    <td className="mono">{n.node_id}</td>
+                    <td><span className={`badge ${online ? "ok" : "warn"}`}>{online ? "online" : "offline"}</span></td>
+                    <td className="muted">{ago(n.last_seen)}</td>
+                    <td className="mono">{n.error_count}</td>
+                    <td>
+                      <button className="danger" onClick={() => revokeNode(n.node_id)}>Remove</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <p className="muted" style={{ marginTop: 10 }}>
+          Removing a Mac unbinds it and revokes its login token — it cannot
+          re-enroll without a fresh <span className="mono">idlegrid-provider login</span>.
+        </p>
+      </div>
 
       <div className="card">
         <h2>Your payouts</h2>
