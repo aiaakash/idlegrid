@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Sparkline from "@/components/Sparkline";
 
 const fmtUSD = (micro) =>
   `$${(micro / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
@@ -47,6 +48,15 @@ export default function OverviewPage() {
   const totalTokens = usage.reduce((a, u) => a + (u.est_output_tokens || 0), 0);
   const earnings = me.provider_earnings_micro || 0;
 
+  // Requests per hour for the last 24h (for the sparkline).
+  const buckets = Array(24).fill(0);
+  const now = Date.now();
+  for (const u of usage) {
+    const hAgo = Math.floor((now - new Date(u.created_at).getTime()) / 3_600_000);
+    if (hAgo >= 0 && hAgo < 24) buckets[23 - hAgo]++;
+  }
+  const req24h = buckets.reduce((a, b) => a + b, 0);
+
   return (
     <>
       {balance < 1_000_000 && (
@@ -88,6 +98,19 @@ export default function OverviewPage() {
           </div>
         </div>
       )}
+
+      <div className="card">
+        <div className="row" style={{ marginBottom: 4 }}>
+          <h2 style={{ margin: 0 }}>Requests — last 24h</h2>
+          <div className="spacer" style={{ flex: 1 }} />
+          <span className="muted">{req24h} total</span>
+        </div>
+        {req24h > 0 ? (
+          <Sparkline points={buckets} />
+        ) : (
+          <p className="muted">no requests in the last 24 hours</p>
+        )}
+      </div>
 
       <div className="card">
         <h2>Recent requests</h2>
