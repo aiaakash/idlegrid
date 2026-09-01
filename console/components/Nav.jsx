@@ -14,7 +14,7 @@ const links = [
   ["/admin", "Admin"],
 ];
 
-export default function Nav({ role }) {
+export default function Nav({ role, email }) {
   const path = usePathname();
   const router = useRouter();
 
@@ -37,6 +37,12 @@ export default function Nav({ role }) {
           ))}
       </nav>
       <div className="spacer" />
+      {email && (
+        <div className="whoami">
+          <div className="email" title={email}>{email}</div>
+          <span className={`badge ${role === "admin" ? "warn" : ""}`}>{role}</span>
+        </div>
+      )}
       <button className="ghost" onClick={logout}>Sign out</button>
     </aside>
   );

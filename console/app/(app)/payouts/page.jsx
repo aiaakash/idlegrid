@@ -6,28 +6,37 @@ const fmtUSD = (micro) => `$${(micro / 1_000_000).toFixed(4)}`;
 
 export default function PayoutsPage() {
   const [payouts, setPayouts] = useState([]);
+  const [me, setMe] = useState(null);
   const [amount, setAmount] = useState("");
   const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function load() {
     const res = await fetch("/api/console/payouts");
     const j = await res.json();
     setPayouts(j.payouts || []);
+    fetch("/api/console/me").then((r) => r.json()).then(setMe).catch(() => {});
   }
   useEffect(() => { load(); }, []);
+
+  const available = me?.provider_earnings_micro || 0;
 
   async function request(e) {
     e.preventDefault();
     setMsg("");
     const dollars = parseFloat(amount);
-    if (!dollars || dollars <= 0) return;
+    if (!dollars || dollars < 10) return setMsg("minimum payout is $10");
+    if (dollars * 1_000_000 > available) return setMsg("amount exceeds your available earnings");
+    setBusy(true);
     const res = await fetch("/api/console/payout-request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ amount_micro: Math.round(dollars * 1_000_000) }),
     });
+    setBusy(false);
     const j = await res.json();
     setMsg(res.ok ? "payout requested — the platform admin will process it" : j.error || "failed");
+    if (res.ok) setAmount("");
     load();
   }
 
@@ -39,6 +48,11 @@ export default function PayoutsPage() {
           Payouts are processed manually by the platform admin (PayPal / Wise / UPI)
           while automated rails are being integrated. Minimum $10.
         </p>
+        {me && (
+          <p className="muted" style={{ marginBottom: 10 }}>
+            Available: <span className="mono" style={{ color: "var(--green)" }}>{fmtUSD(available)}</span>
+          </p>
+        )}
         <form onSubmit={request} className="row">
           <input
             placeholder="amount in USD, e.g. 25"
@@ -46,9 +60,12 @@ export default function PayoutsPage() {
             onChange={(e) => setAmount(e.target.value)}
             style={{ flex: 1 }}
           />
-          <button>Request payout</button>
+          <button type="button" className="ghost" onClick={() => setAmount((available / 1_000_000).toFixed(2))}>
+            Max
+          </button>
+          <button disabled={busy}>{busy ? "Requesting…" : "Request payout"}</button>
         </form>
-        {msg && <div className="ok">{msg}</div>}
+        {msg && <div className={msg.includes("requested") ? "ok" : "err"}>{msg}</div>}
       </div>
 
       <div className="card">

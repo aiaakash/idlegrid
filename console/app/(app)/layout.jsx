@@ -8,7 +8,7 @@ export default async function AppLayout({ children }) {
 
   return (
     <div className="shell">
-      <Nav role={user.role} />
+      <Nav role={user.role} email={user.email} />
       <main className="content">{children}</main>
     </div>
   );

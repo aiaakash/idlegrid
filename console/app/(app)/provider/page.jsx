@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import CopyButton from "@/components/CopyButton";
+
+const INSTALL_CMD = "curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash\n~/.idlegrid/bin/idlegrid-provider login";
 
 const fmtUSD = (micro) => `$${(micro / 1_000_000).toFixed(4)}`;
 
@@ -54,10 +57,13 @@ export default function ProviderPage() {
           Enrolled Macs earn <b>directly to your account</b> (90% of every
           request they serve). On the Mac you want to enroll:
         </p>
-        <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all" }}>
-          curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash<br/>
-          ~/.idlegrid/bin/idlegrid-provider login
-        </p>
+        <div className="copychip">
+          <span className="mono">
+            curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash<br/>
+            ~/.idlegrid/bin/idlegrid-provider login
+          </span>
+          <CopyButton text={INSTALL_CMD} label="Copy" />
+        </div>
         <p className="muted" style={{ marginTop: 8 }}>
           <span className="mono">login</span> shows a short code — approve it
           on the <a href="/link">Link a Mac</a> page and the Mac is enrolled.
@@ -69,13 +75,9 @@ export default function ProviderPage() {
             curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br/>
             &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
           </p>
-          <button
-            className="ghost"
-            style={{ marginTop: 10 }}
-            onClick={() => navigator.clipboard.writeText(`--enroll-code ${code}`)}
-          >
-            Copy enroll code
-          </button>
+          <div style={{ marginTop: 10 }}>
+            <CopyButton text={`--enroll-code ${code || ""}`} label="Copy enroll code" />
+          </div>
         </details>
         {code && instructions && <p className="muted" style={{ marginTop: 10 }}>{instructions}</p>}
       </div>

@@ -5,9 +5,17 @@ import { useEffect, useState } from "react";
 const fmtUSD = (micro) =>
   `$${(micro / 1_000_000).toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
 
+const ago = (ts) => {
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
 export default function OverviewPage() {
   const [me, setMe] = useState(null);
-  const [usage, setUsage] = useState([]);
+  const [usage, setUsage] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -24,28 +32,48 @@ export default function OverviewPage() {
     })();
   }, []);
 
-  if (!me) return <p className="muted">loading…</p>;
+  if (!me || usage === null) {
+    return (
+      <>
+        <div className="grid" style={{ marginBottom: 16 }}>
+          {[...Array(4)].map((_, i) => <div key={i} className="card skeleton" style={{ height: 84 }} />)}
+        </div>
+        <div className="card skeleton" style={{ height: 220 }} />
+      </>
+    );
+  }
+
+  const balance = me.developer_balance_micro || 0;
   const totalTokens = usage.reduce((a, u) => a + (u.est_output_tokens || 0), 0);
+  const earnings = me.provider_earnings_micro || 0;
 
   return (
     <>
+      {balance < 1_000_000 && (
+        <div className="banner warn">
+          ⚠ Balance is under $1 — <a href="/topup">top up</a> before requests start failing with 402.
+        </div>
+      )}
+
       <div className="grid" style={{ marginBottom: 16 }}>
         <div className="card stat">
           <div className="label">Balance</div>
-          <div className="value">{fmtUSD(me.developer_balance_micro || 0)}</div>
+          <div className="value">{fmtUSD(balance)}</div>
         </div>
         <div className="card stat">
-          <div className="label">Requests</div>
+          <div className="label">Requests (recent)</div>
           <div className="value">{usage.length}</div>
         </div>
         <div className="card stat">
           <div className="label">Output tokens (recent)</div>
           <div className="value">{totalTokens.toLocaleString()}</div>
         </div>
-        <div className="card stat">
-          <div className="label">Role</div>
-          <div className="value" style={{ fontSize: 16 }}>{me.role}</div>
-        </div>
+        {earnings > 0 && (
+          <div className="card stat">
+            <div className="label">Provider earnings</div>
+            <div className="value" style={{ color: "var(--green)" }}>{fmtUSD(earnings)}</div>
+          </div>
+        )}
       </div>
 
       {me.role === "admin" && (
@@ -66,19 +94,19 @@ export default function OverviewPage() {
         {err ? (
           <p className="err">{err}</p>
         ) : usage.length === 0 ? (
-          <p className="muted">no requests yet — create an API key and start calling the API</p>
+          <p className="muted">no requests yet — create an <a href="/keys">API key</a> and start calling the API</p>
         ) : (
           <table>
-            <thead><tr><th>Model</th><th>In</th><th>Out</th><th>Cost</th><th>Status</th><th>When</th></tr></thead>
+            <thead><tr><th>Model</th><th style={{ textAlign: "right" }}>In</th><th style={{ textAlign: "right" }}>Out</th><th style={{ textAlign: "right" }}>Cost</th><th>Status</th><th>When</th></tr></thead>
             <tbody>
               {usage.slice(0, 10).map((u) => (
                 <tr key={u.request_id}>
                   <td className="mono">{u.model}</td>
-                  <td className="mono">{u.provider_input_tokens ?? u.est_input_tokens}</td>
-                  <td className="mono">{u.provider_output_tokens ?? u.est_output_tokens}</td>
-                  <td className="mono">{fmtUSD(u.gross_micro)}</td>
+                  <td className="num">{(u.provider_input_tokens ?? u.est_input_tokens).toLocaleString()}</td>
+                  <td className="num">{(u.provider_output_tokens ?? u.est_output_tokens).toLocaleString()}</td>
+                  <td className="num">{fmtUSD(u.gross_micro)}</td>
                   <td><span className={`badge ${u.status === "completed" ? "ok" : "warn"}`}>{u.status}</span></td>
-                  <td className="muted">{new Date(u.created_at).toLocaleString()}</td>
+                  <td className="muted" title={new Date(u.created_at).toLocaleString()}>{ago(u.created_at)}</td>
                 </tr>
               ))}
             </tbody>
