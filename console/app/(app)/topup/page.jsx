@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fmtUSD } from "@/lib/format";
 
-const fmtUSD = (micro) => `$${(micro / 1_000_000).toFixed(4)}`;
+const QUICK = [5, 10, 25, 50];
 
 export default function TopupPage() {
   const [amount, setAmount] = useState("10");
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const [me, setMe] = useState(null);
 
@@ -15,21 +15,34 @@ export default function TopupPage() {
     fetch("/api/console/me").then((r) => r.json()).then(setMe).catch(() => {});
   }, []);
 
+  const amountNum = parseFloat(amount);
+  const amountValid = Number.isFinite(amountNum) && amountNum >= 5;
+
   async function topup(e) {
     e.preventDefault();
-    setBusy(true); setErr(""); setMsg("");
-    const res = await fetch("/api/console/topup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount_usd: parseFloat(amount) }),
-    });
-    setBusy(false);
-    const j = await res.json().catch(() => ({}));
-    if (res.ok && j.payment_link) {
-      window.location.href = j.payment_link; // Dodo checkout
+    setErr("");
+    if (!amountValid) {
+      setErr("minimum top-up is $5");
       return;
     }
-    setErr(j.error || "top-up failed");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/console/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount_usd: amountNum }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.payment_link) {
+        window.location.href = j.payment_link; // Dodo checkout
+        return;
+      }
+      setErr(j.error || "top-up failed");
+    } catch {
+      setErr("cannot reach the console — check your connection and retry");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -37,27 +50,39 @@ export default function TopupPage() {
       <div className="card">
         <h2>Add credit</h2>
         <p className="muted" style={{ marginBottom: 12 }}>
-          Prepaid credit is consumed per token. Payments are processed by Dodo
-          Payments (cards + global methods, taxes handled at checkout).
+          Prepaid credit is consumed per token — $0.05 / 1M input, $0.20 / 1M
+          output unless a model lists its own price. Payments are processed by
+          Dodo Payments (cards + global methods, taxes handled at checkout).
         </p>
-        <form onSubmit={topup} className="row">
-          <input
-            type="number" step="1" min="5"
-            placeholder="amount in USD (min 5)"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            style={{ flex: 1 }}
-            required
-          />
-          <button disabled={busy}>{busy ? "Redirecting…" : "Top up"}</button>
+        <form onSubmit={topup}>
+          <div className="field">
+            <label htmlFor="amount">Amount in USD (min $5)</label>
+            <div className="row">
+              <input
+                id="amount"
+                name="amount"
+                type="number" step="0.01" min="5" max="10000"
+                inputMode="decimal" autoComplete="off"
+                placeholder="amount in USD (min 5)"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                style={{ flex: 1 }}
+                required
+                disabled={busy}
+              />
+              <button disabled={busy || !amountValid}>{busy ? "Redirecting…" : "Top up"}</button>
+            </div>
+          </div>
+          <div className="row" role="group" aria-label="Quick amounts" style={{ marginTop: 10 }}>
+            {QUICK.map((v) => (
+              <button key={v} type="button" className="ghost"
+                aria-pressed={String(v) === String(Math.round(amountNum))}
+                onClick={() => setAmount(String(v))}>${v}</button>
+            ))}
+          </div>
         </form>
-        <div className="row" style={{ marginTop: 10 }}>
-          {[5, 10, 25, 50].map((v) => (
-            <button key={v} className="ghost" onClick={() => setAmount(String(v))}>${v}</button>
-          ))}
-        </div>
-        {err && <div className="err">{err}</div>}
-        {msg && <div className="ok">{msg}</div>}
+        <p className="hint">You leave for Dodo Checkout to pay — credit lands automatically on return.</p>
+        {err && <div className="err" role="alert">{err}</div>}
       </div>
 
       {me && (

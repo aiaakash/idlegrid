@@ -1,7 +1,7 @@
 "use client";
 
 // Tiny dependency-free SVG sparkline: area + line, accent-colored.
-export default function Sparkline({ points, height = 48 }) {
+export default function Sparkline({ points, height = 48, label = "Requests over time" }) {
   if (!points || points.length < 2) return null;
   const w = 240, h = height, pad = 2;
   const max = Math.max(...points, 1);
@@ -12,7 +12,9 @@ export default function Sparkline({ points, height = 48 }) {
 
   return (
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
-         style={{ width: "100%", height, display: "block" }} aria-hidden>
+         style={{ width: "100%", height, display: "block" }}
+         role="img" aria-label={label}>
+      <title>{label}</title>
       <polygon points={area} fill="var(--accent)" opacity="0.12" />
       <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth="1.5"
                 strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />

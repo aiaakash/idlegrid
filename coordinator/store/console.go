@@ -21,7 +21,7 @@ type ConsoleStore interface {
 	ListUsers(ctx context.Context) ([]UserRow, error)
 	EnsureUser(ctx context.Context, email, role string) (int64, error)
 
-	CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64) (int64, error)
+	CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64, rail, railRef string) (int64, error)
 	ListPayouts(ctx context.Context, userID *int64) ([]PayoutRow, error)
 	MarkPayout(ctx context.Context, payoutID int64, status, rail, railRef string) error
 	// SettlePayout marks a payout paid and records the debit from the

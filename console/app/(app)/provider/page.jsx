@@ -2,45 +2,42 @@
 
 import { useEffect, useState } from "react";
 import CopyButton from "@/components/CopyButton";
+import { fmtUSD, ago } from "@/lib/format";
 
-const INSTALL_CMD = "curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash\n~/.idlegrid/bin/idlegrid-provider login";
-
-const fmtUSD = (micro) => `$${(micro / 1_000_000).toFixed(4)}`;
-
-const ago = (ts) => {
-  if (!ts) return "never";
-  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-  if (s < 5) return "just now";
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-};
+const INSTALL_STEP1 = "curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash";
+const INSTALL_STEP2 = "~/.idlegrid/bin/idlegrid-provider login";
+const INSTALL_CMD = `${INSTALL_STEP1}\n${INSTALL_STEP2}`;
+const ONLINE_MS = 30_000; // polling is 10s — 30s threshold avoids flappy online/offline
 
 export default function ProviderPage() {
   const [code, setCode] = useState(null);
+  const [codeFailed, setCodeFailed] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [me, setMe] = useState(null);
-  const [payouts, setPayouts] = useState([]);
-  const [nodes, setNodes] = useState([]);
+  const [nodes, setNodes] = useState(null);
+  const [confirmRemove, setConfirmRemove] = useState(null);
 
   const loadNodes = () =>
     fetch("/api/console/nodes").then((r) => r.json()).then((j) => setNodes(j.nodes || [])).catch(() => {});
 
   useEffect(() => {
     fetch("/api/console/enrollment").then((r) => r.json()).then((j) => {
-      setCode(j.enrollment_code);
-      setInstructions(j.instructions);
-    }).catch(() => {});
+      setCode(j.enrollment_code || null);
+      setInstructions(j.instructions || "");
+      if (!j.enrollment_code) setCodeFailed(true);
+    }).catch(() => setCodeFailed(true));
     fetch("/api/console/me").then((r) => r.json()).then(setMe).catch(() => {});
-    fetch("/api/console/payouts").then((r) => r.json()).then((j) => setPayouts(j.payouts || [])).catch(() => {});
     loadNodes();
-    const t = setInterval(loadNodes, 10000); // health is live-ish
-    return () => clearInterval(t);
+    const t = setInterval(() => {
+      if (!document.hidden) loadNodes();
+    }, 10000);
+    const onVis = () => { if (!document.hidden) loadNodes(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   async function revokeNode(nodeID) {
-    if (!confirm(`Remove ${nodeID}? Its login token is revoked — it stops earning until re-linked.`)) return;
+    setConfirmRemove(null);
     const res = await fetch("/api/console/nodes/revoke", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -49,74 +46,110 @@ export default function ProviderPage() {
     if (res.ok) loadNodes();
   }
 
+  const onlineCount = (nodes || []).filter(
+    (n) => n.last_seen && Date.now() - new Date(n.last_seen).getTime() < ONLINE_MS
+  ).length;
+
   return (
     <>
       <div className="card">
         <h2>Enroll a Mac to your account</h2>
         <p className="muted" style={{ marginBottom: 12 }}>
           Enrolled Macs earn <b>directly to your account</b> (90% of every
-          request they serve). On the Mac you want to enroll:
+          request they serve). On the Mac you want to enroll, run each line:
         </p>
+        <div className="copychip" style={{ marginBottom: 8 }}>
+          <span className="mono">{INSTALL_STEP1}</span>
+          <CopyButton text={INSTALL_STEP1} label="Copy" />
+        </div>
         <div className="copychip">
-          <span className="mono">
-            curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash<br/>
-            ~/.idlegrid/bin/idlegrid-provider login
-          </span>
-          <CopyButton text={INSTALL_CMD} label="Copy" />
+          <span className="mono">{INSTALL_STEP2}</span>
+          <CopyButton text={INSTALL_CMD} label="Copy both" />
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
           <span className="mono">login</span> shows a short code — approve it
-          on the <a href="/link">Link a Mac</a> page and the Mac is enrolled.
+          on the <a href="/link">Link Mac</a> page and the Mac is enrolled.
           No codes to copy.
         </p>
         <details style={{ marginTop: 12 }}>
           <summary className="muted">Legacy: manual install with enrollment code</summary>
-          <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all", marginTop: 8 }}>
-            curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br/>
-            &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
-          </p>
-          <div style={{ marginTop: 10 }}>
-            <CopyButton text={`--enroll-code ${code || ""}`} label="Copy enroll code" />
-          </div>
+          {codeFailed ? (
+            <p className="err" style={{ marginTop: 8 }}>could not load enrollment code — reload the page to retry</p>
+          ) : (
+            <>
+              <p className="mono" style={{ background: "var(--panel2)", padding: "10px 12px", borderRadius: 8, wordBreak: "break-all", marginTop: 8 }}>
+                curl -fsSL https://raw.githubusercontent.com/aiaakash/idlegrid/main/deploy/install.sh | bash -s -- \<br />
+                &nbsp;&nbsp;--code &lt;network-join-code&gt; --enroll-code <b>{code || "…"}</b>
+              </p>
+              <div style={{ marginTop: 10 }}>
+                <CopyButton text={code ? `--enroll-code ${code}` : ""} label="Copy enroll code" />
+              </div>
+            </>
+          )}
         </details>
         {code && instructions && <p className="muted" style={{ marginTop: 10 }}>{instructions}</p>}
       </div>
 
-      {me && (
+      {me ? (
         <div className="card stat">
           <div className="label">Your provider earnings</div>
           <div className="value">{fmtUSD(me.provider_earnings_micro || 0)}</div>
           <p className="muted" style={{ marginTop: 8 }}>
-            90% of every request served by your enrolled Macs. Request a payout
-            from the Payouts page.
+            90% of every request served by your enrolled Macs.{" "}
+            <a href="/payouts">Request a payout →</a>
           </p>
         </div>
+      ) : (
+        <div className="card skeleton" style={{ height: 84 }} aria-label="Loading earnings" />
       )}
 
       <div className="card">
-        <h2>Your enrolled Macs</h2>
-        {nodes.length === 0 ? (
-          <p className="muted">no Macs enrolled yet — run the install + login above</p>
+        <div className="row" style={{ marginBottom: 12 }}>
+          <h2 style={{ margin: 0 }}>Your enrolled Macs{nodes ? ` (${onlineCount} online)` : ""}</h2>
+          <div className="spacer" style={{ flex: 1 }} />
+          <button type="button" className="ghost" onClick={loadNodes}>Refresh</button>
+        </div>
+        {nodes === null ? (
+          <div className="card skeleton" style={{ height: 80 }} aria-label="Loading nodes" />
+        ) : nodes.length === 0 ? (
+          <div>
+            <p className="muted">no Macs enrolled yet — run the install + login above</p>
+            <div className="steps" aria-label="Enroll progress">
+              <span className="step">1 · Install provider</span>
+              <span className="step">2 · <a href="/link">Approve code</a></span>
+              <span className="step">3 · Serve first request</span>
+            </div>
+          </div>
         ) : (
-          <table>
-            <thead><tr><th>Node</th><th>Status</th><th>Last seen</th><th>Errors</th><th></th></tr></thead>
-            <tbody>
-              {nodes.map((n) => {
-                const online = n.last_seen && (Date.now() - new Date(n.last_seen).getTime()) < 15_000;
-                return (
-                  <tr key={n.node_id}>
-                    <td className="mono">{n.node_id}</td>
-                    <td><span className={`badge ${online ? "ok" : "warn"}`}>{online ? "online" : "offline"}</span></td>
-                    <td className="muted">{ago(n.last_seen)}</td>
-                    <td className="mono">{n.error_count}</td>
-                    <td>
-                      <button className="danger" onClick={() => revokeNode(n.node_id)}>Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="tablewrap">
+            <table>
+              <thead><tr><th>Node</th><th>Status</th><th>Last seen</th><th style={{ textAlign: "right" }}>Errors</th><th><span style={{ display: "none" }}>Actions</span></th></tr></thead>
+              <tbody>
+                {nodes.map((n) => {
+                  const online = n.last_seen && (Date.now() - new Date(n.last_seen).getTime()) < ONLINE_MS;
+                  return (
+                    <tr key={n.node_id}>
+                      <td className="mono">{n.node_id}</td>
+                      <td><span className={`badge ${online ? "ok" : ""}`}>{online ? "online" : "offline"}</span></td>
+                      <td className="muted" title={n.last_seen ? new Date(n.last_seen).toLocaleString() : ""}>{ago(n.last_seen)}</td>
+                      <td className="num">{n.error_count}</td>
+                      <td style={{ textAlign: "right" }}>
+                        {confirmRemove !== n.node_id ? (
+                          <button className="danger" onClick={() => setConfirmRemove(n.node_id)}>Remove</button>
+                        ) : (
+                          <span className="confirmbar">
+                            <span className="muted">Remove? It stops earning.</span>
+                            <button className="danger" onClick={() => revokeNode(n.node_id)}>Yes, remove</button>
+                            <button className="ghost" onClick={() => setConfirmRemove(null)}>Keep</button>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
         <p className="muted" style={{ marginTop: 10 }}>
           Removing a Mac unbinds it and revokes its login token — it cannot
@@ -125,23 +158,15 @@ export default function ProviderPage() {
       </div>
 
       <div className="card">
-        <h2>Your payouts</h2>
-        {payouts.length === 0 ? (
-          <p className="muted">no payouts yet</p>
-        ) : (
-          <table>
-            <thead><tr><th>ID</th><th>Amount</th><th>Status</th></tr></thead>
-            <tbody>
-              {payouts.map((p) => (
-                <tr key={p.id}>
-                  <td className="mono">#{p.id}</td>
-                  <td className="mono">{fmtUSD(p.amount_micro)}</td>
-                  <td><span className={`badge ${p.status === "paid" ? "ok" : "warn"}`}>{p.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <div className="row">
+          <h2 style={{ margin: 0 }}>Payouts</h2>
+          <div className="spacer" style={{ flex: 1 }} />
+          <a href="/payouts" className="muted">Manage payouts →</a>
+        </div>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Earnings, history, and payout requests live on the{" "}
+          <a href="/payouts">Payouts page</a>.
+        </p>
       </div>
     </>
   );

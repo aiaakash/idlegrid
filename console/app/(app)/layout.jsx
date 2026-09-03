@@ -8,8 +8,9 @@ export default async function AppLayout({ children }) {
 
   return (
     <div className="shell">
-      <Nav role={user.role} email={user.email} />
-      <main className="content">{children}</main>
+      <a href="#main" className="skip-link">Skip to content</a>
+      <Nav role={user.role} email={user.email} balanceMicro={user.developer_balance_micro} />
+      <main className="content" id="main" tabIndex={-1}>{children}</main>
     </div>
   );
 }

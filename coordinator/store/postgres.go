@@ -314,11 +314,14 @@ func (p *PostgresBilling) UsageRows(ctx context.Context, userID *int64, limit in
 
 // ---- payouts ----
 
-func (p *PostgresBilling) CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64) (int64, error) {
+func (p *PostgresBilling) CreatePayoutRequest(ctx context.Context, userID int64, amountMicro int64, rail, railRef string) (int64, error) {
+	if rail == "" {
+		rail = "manual"
+	}
 	var id int64
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO payouts (user_id, amount_micro) VALUES ($1, $2) RETURNING id`,
-		userID, amountMicro).Scan(&id)
+		INSERT INTO payouts (user_id, amount_micro, rail, rail_ref) VALUES ($1, $2, $3, NULLIF($4,'')) RETURNING id`,
+		userID, amountMicro, rail, railRef).Scan(&id)
 	return id, err
 }
 

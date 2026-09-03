@@ -24,9 +24,18 @@ a { color: var(--accent); text-decoration: none; }
 .sidebar h1 span { background: linear-gradient(90deg, var(--accent), var(--accent2));
   -webkit-background-clip: text; background-clip: text; color: transparent; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
-.sidebar nav a { padding: 8px 12px; border-radius: 8px; color: var(--dim); font-size: 13px; }
+.sidebar nav a { padding: 8px 12px; border-radius: 8px; color: var(--dim); font-size: 13px;
+  display: flex; align-items: center; gap: 8px; }
 .sidebar nav a:hover:not(.active) { color: var(--text); background: color-mix(in srgb, var(--panel2) 70%, transparent); }
 .sidebar nav a.active { color: var(--text); background: var(--panel2); }
+.sidebar .navgroup { font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--dim); padding: 12px 12px 4px; opacity: .8; }
+.sidebar .navgroup:first-of-type { padding-top: 0; }
+.sidebar .balance { margin: 4px 10px 8px; padding: 10px 12px; background: var(--panel2);
+  border: 1px solid var(--border); border-radius: 10px; }
+.sidebar .balance .label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+.sidebar .balance .value { font-family: var(--mono); font-size: 15px; font-weight: 700; margin-top: 2px; }
+.sidebar .balance .value.low { color: #fbbf24; }
 .sidebar .spacer { flex: 1; }
 .sidebar .whoami { padding: 10px; margin-bottom: 8px; border-top: 1px solid var(--border); }
 .sidebar .whoami .email { font-size: 12px; color: var(--text); overflow: hidden;
@@ -36,14 +45,27 @@ a { color: var(--accent); text-decoration: none; }
 @media (max-width: 760px) {
   .shell { flex-direction: column; }
   .sidebar {
-    width: auto; height: auto; position: static;
-    flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px;
+    width: auto; height: auto; position: sticky; top: 0; z-index: 20;
+    flex-direction: column; align-items: stretch; gap: 6px;
     border-right: none; border-bottom: 1px solid var(--border);
+    padding: 12px;
   }
-  .sidebar h1 { padding: 0 6px; }
-  .sidebar nav { flex-direction: row; flex-wrap: wrap; }
+  .sidebar .topbar { display: flex; align-items: center; gap: 8px; }
+  .sidebar h1 { padding: 0 6px; flex: 1; }
+  .sidebar nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto;
+    gap: 4px; padding-bottom: 4px; scrollbar-width: thin; }
+  .sidebar nav a { white-space: nowrap; flex-shrink: 0; }
+  .sidebar .navgroup { display: none; }
+  .sidebar .balance { display: none; }
   .sidebar .spacer { display: none; }
+  .sidebar .whoami { display: none; }
+  .sidebar .mobilemenu { display: flex; }
   .content { padding: 20px 16px 60px; }
+}
+@media (min-width: 761px) {
+  .sidebar .topbar { display: contents; }
+  .sidebar .mobilemenu { display: none; }
+  .sidebar .menutoggle { display: none; }
 }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
   padding: 18px 20px; margin-bottom: 16px; }
@@ -53,6 +75,10 @@ a { color: var(--accent); text-decoration: none; }
 .stat .label { color: var(--dim); font-size: 11px; text-transform: uppercase;
   letter-spacing: .08em; margin-bottom: 4px; }
 .stat .value { font-size: 22px; font-weight: 700; font-family: var(--mono); }
+/* Scrollable table wrapper — prevents 7-col tables breaking mobile layout. */
+.tablewrap { overflow-x: auto; margin: 0 -20px; padding: 0 20px; }
+.tablewrap table { min-width: 560px; }
+.tablewrap thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; color: var(--dim); font-weight: 500; font-size: 11px;
   text-transform: uppercase; letter-spacing: .06em; padding: 7px 10px;
@@ -89,6 +115,24 @@ button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 1
   border: 1px solid var(--border); color: var(--dim); }
 .badge.ok { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
 .badge.warn { color: var(--amber, #fbbf24); border-color: #fbbf2455; }
+.badge.err { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.skip-link { position: absolute; left: -9999px; top: 8px; z-index: 100;
+  background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px; }
+.skip-link:focus { left: 8px; }
+/* Selected quick-amount / tab state. */
+button.ghost[aria-pressed="true"], button.ghost.selected {
+  color: var(--text); border-color: var(--accent); background: rgba(124,92,255,.12); }
+/* Form hints + inline confirm. */
+.hint { color: var(--dim); font-size: 12px; margin-top: 6px; }
+.confirmbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+.steps { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.steps .step { font-size: 12px; color: var(--dim); border: 1px solid var(--border);
+  border-radius: 20px; padding: 4px 10px; }
+.steps .step.done { color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  * { transition: none !important; }
+}
 
 /* Numbers: tabular, no wrap, right-aligned in tables. */
 .num { font-family: var(--mono); font-size: 12px; white-space: nowrap; text-align: right; }

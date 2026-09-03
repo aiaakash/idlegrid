@@ -235,20 +235,26 @@ func (g *Gateway) HandleConsoleUsage(w http.ResponseWriter, r *http.Request, u s
 	writeJSON(w, http.StatusOK, map[string]any{"usage": rows})
 }
 
-// HandleConsolePayoutRequest: POST {amount_micro} -> payout row (requested).
+// HandleConsolePayoutRequest: POST {amount_micro, rail?, rail_ref?} -> payout row (requested).
 func (g *Gateway) HandleConsolePayoutRequest(w http.ResponseWriter, r *http.Request, u store.APIKeyAuth) {
 	cs, ok := g.consoleStore(w, r)
 	if !ok {
 		return
 	}
 	var body struct {
-		AmountMicro int64 `json:"amount_micro"`
+		AmountMicro int64  `json:"amount_micro"`
+		Rail        string `json:"rail"`
+		RailRef     string `json:"rail_ref"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AmountMicro <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount_micro required"})
 		return
 	}
-	id, err := cs.CreatePayoutRequest(r.Context(), u.UserID, body.AmountMicro)
+	rail := body.Rail
+	if rail != "paypal" && rail != "wise" && rail != "upi" {
+		rail = "manual"
+	}
+	id, err := cs.CreatePayoutRequest(r.Context(), u.UserID, body.AmountMicro, rail, strings.TrimSpace(body.RailRef))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
